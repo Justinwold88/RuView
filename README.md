@@ -845,6 +845,15 @@ Start with the user, build, and calibration guides; expand for the full referenc
 
 [![Cognitum One: Ambient Intelligence at the edge of the physical world](assets/readme/cognitum-spatial-v4.svg)](https://cognitum.one)
 
+## 🤝 Contributing
+
+Contributions are welcome: bug reports, docs, tests, firmware, and new sensing features.
+
+- **Start here:** [`CONTRIBUTING.md`](CONTRIBUTING.md) covers setup, branch naming, Conventional Commits, the validation commands for each area, and the ADR process.
+- **Evidence rule:** accuracy and performance claims must be tagged `MEASURED` (with a reproducer), `CLAIMED`, or `SYNTHETIC`, and hardware claims need a captured device log.
+- **Security issues:** please report privately. See [`SECURITY.md`](SECURITY.md).
+- **Community standards:** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
 ## 📄 License
 
 MIT License — see [LICENSE](LICENSE) for details.

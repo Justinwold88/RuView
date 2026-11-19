@@ -222,11 +222,17 @@ async fn run(
              keypoints, so no pose entity is announced (issue #2085)"
         );
     }
-    if cfg.publish_heart_rate && !cfg.privacy_mode {
+    if cfg.publish_heart_rate {
+        // Privacy mode withholds the heart-rate value but not the derived
+        // possible-distress state, so the warning applies either way.
+        let announced = if cfg.privacy_mode {
+            "possible distress (heart rate itself is withheld by --privacy-mode)"
+        } else {
+            "heart rate and possible distress"
+        };
         otel_warn!(
-            "[mqtt] --mqtt-publish-heart-rate: announcing heart rate and possible distress. \
-             Heart rate from single-antenna CSI is not validated; do not use it for health \
-             or safety decisions"
+            "[mqtt] --mqtt-publish-heart-rate: announcing {announced}. Heart rate from \
+             single-antenna CSI is not validated; do not use it for health or safety decisions"
         );
     }
 

@@ -613,7 +613,7 @@ mod tests {
     }
 
     #[test]
-    fn enabled_entities_default_includes_every_sourced_entity() {
+    fn enabled_entities_with_heart_rate_opt_in_includes_every_sourced_entity() {
         let entities = DiscoveryBuilder::enabled_entities(false, false, true, &[]);
         assert!(!entities.contains(&EntityKind::PoseKeypoints));
         assert!(entities.contains(&EntityKind::Presence));

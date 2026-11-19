@@ -36,7 +36,7 @@ cargo run --release -p wifi-densepose-sensing-server \
 Within ~5 seconds of the first CSI frame, Home Assistant should auto-create:
 
 - One **device** per RuView node, named `RuView node <client-id>-node<N>` (see [Device identity](#device-identity))
-- **13 entities** per device by default, 15 with `--mqtt-publish-heart-rate` (12 with `--privacy-mode`): the raw signals and six semantic primitives listed in the [Entity reference](#entity-reference)
+- **13 entities** per device by default, 15 with `--mqtt-publish-heart-rate`: the raw signals and semantic primitives listed in the [Entity reference](#entity-reference). `--privacy-mode` removes heart and breathing rate, leaving 12, or 13 with both flags (`possible_distress` stays; its heart-rate input is not published)
 
 If nothing appears in HA's Settings → Devices, see [Troubleshooting](#troubleshooting).
 
@@ -173,9 +173,9 @@ When deploying in **healthcare**, **AAL (aging-in-place)**, or **commercial** se
 
 - **Strips** heart rate and breathing rate from every outbound MQTT publication and, in the same way, from REST responses, WebSocket frames and recordings (pose is never announced over MQTT; see [Not announced](#not-announced)).
 - **Suppresses discovery** for those entities entirely: Home Assistant never sees them, and no availability or state topic is published for them.
-- **Keeps the semantic primitives enabled.** `someone_sleeping` and `possible_distress` still use breathing and heart rate *inside the server*; only the ON/OFF state crosses the wire (ADR-115 §3.12.3). If that is too much for your deployment, drop those two entities in Home Assistant.
+- **Keeps the semantic primitives enabled.** `someone_sleeping` and `possible_distress` (the latter only with `--mqtt-publish-heart-rate`) still use breathing and heart rate *inside the server*; only the ON/OFF state crosses the wire (ADR-115 §3.12.3). If that is too much for your deployment, drop those two entities in Home Assistant.
 
-With `--privacy-mode`, 13 entities are announced per node. Privacy mode reduces what leaves the server. It does not by itself make a deployment compliant with any regulation.
+With `--privacy-mode`, 12 entities are announced per node (13 if `--mqtt-publish-heart-rate` is also set). Privacy mode reduces what leaves the server. It does not by itself make a deployment compliant with any regulation.
 
 Always pair `--privacy-mode` with `--mqtt-tls` on non-localhost brokers.
 

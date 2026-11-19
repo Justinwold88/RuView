@@ -46,11 +46,6 @@ jobs:
         pip install -r requirements.txt
         pip install black flake8 mypy bandit safety
 
-    # Stub-based tests of docker/docker-entrypoint.sh argument handling and
-    # the #864 fail-closed check. Seconds to run; no Docker needed.
-    - name: Docker entrypoint tests
-      run: bash tests/test_docker_entrypoint.sh
-
     - name: Code formatting check (Black)
       continue-on-error: true
       run: black --check --diff archive/v1/src archive/v1/tests
@@ -82,6 +77,20 @@ jobs:
           safety-report.json
 
   # Rust Workspace Tests
+  # Stub-based tests of docker/docker-entrypoint.sh argument handling and the
+  # #864 fail-closed check. Its own job, because code-quality is
+  # continue-on-error and would hide a failure. Seconds to run; no Docker.
+  docker-entrypoint:
+    name: Docker entrypoint tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Run entrypoint tests
+      run: bash tests/test_docker_entrypoint.sh
+
   rust-tests:
     name: Rust Workspace Tests
     runs-on: ubuntu-latest

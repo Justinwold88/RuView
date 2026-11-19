@@ -36,7 +36,7 @@ docker run --rm --net=host \
 ```
 
 - `-e MQTT_PASSWORD` passes the password into the container; `--mqtt-password-env` only names the variable.
-- Pick the data source with `CSI_SOURCE`, not `--source`.
+- `CSI_SOURCE` sets the data source. Passing `--source esp32` after the image name also works; if both are given, the flag wins.
 - `RUVIEW_UDP_ALLOW` lets ESP32 frames in. Without it the CSI receiver stays on loopback ([ADR-296](../adr/ADR-296-sensor-data-plane-bind-hardening.md), [#2089](https://github.com/ruvnet/RuView/issues/2089)) and no node appears.
 
 **From a source checkout** (the Rust workspace lives in `v2/`; `v2/rust-toolchain.toml` pins Rust 1.89 and rustup installs it):

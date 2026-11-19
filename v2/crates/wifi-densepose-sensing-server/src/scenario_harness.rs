@@ -17,7 +17,12 @@
 //! It has no multipath from the person, no furniture motion, no pets and no
 //! interference.
 //!
-//! A second set of runs checks the empty-room calibration (plan item 1.1):
+//! Gate G1 asks for results that hold across three random seed sets, so the
+//! 39 scenarios also run with seeds offset by [`SEED_SET_STRIDE`] (sets 1
+//! and 2; set 0 is the original list). A short G1 summary per set is
+//! reported and ratcheted.
+//!
+//! A further set of runs checks the empty-room calibration (plan item 1.1):
 //! empty, walking and walk-in rooms on a typical, a noisy and a clean link,
 //! each run once with the default presence threshold and once with the
 //! threshold a 60 s calibration of the same empty room produced.
@@ -45,6 +50,15 @@ use std::time::Instant;
 /// Bump when the generator or the scenario list changes, so a stale baseline
 /// is refused instead of compared.
 const GENERATOR_VERSION: &str = "scenario-gen-1";
+
+/// Seed sets for gate G1. Set 0 is the original scenario list.
+const SEED_SETS: u64 = 3;
+/// Added to every seed per seed set, far above any seed in set 0.
+const SEED_SET_STRIDE: u64 = 10_000;
+
+/// Gate G1 limits (plan of action, Phase 1).
+const G1_BREATH_MAE_BPM: f64 = 0.5;
+const G1_FRAME_US: f64 = 264.0;
 
 /// A room "reads occupied" when presence is reported for more than this share
 /// of the empty, post-warm-up frames.
@@ -219,17 +233,29 @@ impl Scenario {
 /// walk and then sit still, and 24 still people across three reflection
 /// strengths for vital signs.
 fn scenarios() -> Vec<Scenario> {
+    scenarios_for(0)
+}
+
+/// The same 39 scenarios with every seed offset by `set` strides: new rooms,
+/// new noise and new breathing and heart rates. Set 0 is [`scenarios`].
+fn scenarios_for(set: u64) -> Vec<Scenario> {
+    let offset = set * SEED_SET_STRIDE;
     let mut out = Vec::new();
     for s in 0..5u64 {
         out.push(Scenario::new(
             format!("empty_s{s}"),
             Family::Empty,
-            s,
+            offset + s,
             Person::None,
         ));
     }
     for s in 0..5u64 {
-        let mut sc = Scenario::new(format!("walk_s{s}"), Family::Walk, 100 + s, Person::Walk);
+        let mut sc = Scenario::new(
+            format!("walk_s{s}"),
+            Family::Walk,
+            offset + 100 + s,
+            Person::Walk,
+        );
         sc.dyn_db = -12.0;
         out.push(sc);
     }
@@ -237,20 +263,20 @@ fn scenarios() -> Vec<Scenario> {
         let mut sc = Scenario::new(
             format!("enter_still_s{s}"),
             Family::EnterStill,
-            200 + s,
+            offset + 200 + s,
             Person::EnterThenStill,
         );
         sc.seconds = 240.0;
         out.push(sc);
     }
-    let mut pick = Rng::new(7);
+    let mut pick = Rng::new(offset + 7);
     let mut i = 0u64;
     for dyn_db in [-10.0, -15.0, -20.0] {
         for _ in 0..8 {
             let mut sc = Scenario::new(
                 format!("vitals_{i:02}"),
                 Family::Vitals,
-                300 + i,
+                offset + 300 + i,
                 Person::Still,
             );
             sc.seconds = 90.0;
@@ -650,6 +676,21 @@ struct LinkRuns {
     refused: BTreeMap<String, String>,
 }
 
+/// Gate G1 numbers for one seed set.
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+struct GateSummary {
+    empty_rooms_read_occupied: usize,
+    empty_rooms_total: usize,
+    still_person_held_without_false_presence: usize,
+    still_person_total: usize,
+    /// Enter-then-sit scenarios where presence came within
+    /// [`WALK_IN_SECS`] of the person entering.
+    walk_ins_caught: usize,
+    walk_ins_total: usize,
+    /// Keyed by reflection strength in dB.
+    breath_mae_bpm: BTreeMap<String, Option<f64>>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Metrics {
     evidence: String,
@@ -667,6 +708,9 @@ struct Metrics {
     /// Empty-room calibration (plan item 1.1), keyed by link.
     #[serde(default)]
     calibration: BTreeMap<String, LinkRuns>,
+    /// Gate G1 summary per seed set ("0", "1", "2").
+    #[serde(default)]
+    seed_sets: BTreeMap<String, GateSummary>,
 }
 
 fn share_pct(xs: &[FrameOut], from: usize, to: usize) -> f64 {
@@ -712,6 +756,7 @@ fn score(runs: &[(Scenario, Vec<FrameOut>)]) -> Metrics {
         vitals_by_scenario: BTreeMap::new(),
         hr_chance_mae_bpm: 0.0,
         calibration: BTreeMap::new(),
+        seed_sets: BTreeMap::new(),
     };
     let mut vitals_errors: BTreeMap<String, (Vec<f64>, usize, Vec<f64>, usize)> = BTreeMap::new();
     let mut chance = Vec::new();
@@ -790,6 +835,34 @@ fn score(runs: &[(Scenario, Vec<FrameOut>)]) -> Metrics {
     }
     m.hr_chance_mae_bpm = mean(&chance).unwrap_or(0.0);
     m
+}
+
+/// G1 numbers for one seed set's runs, scored the same way as [`score`].
+fn gate_summary(runs: &[(Scenario, Vec<FrameOut>)]) -> GateSummary {
+    let m = score(runs);
+    let entries: Vec<Option<f64>> = runs
+        .iter()
+        .filter(|(sc, _)| sc.family == Family::EnterStill)
+        .map(|(sc, out)| entry_latency_secs(out, sc.fs))
+        .collect();
+    GateSummary {
+        empty_rooms_read_occupied: m.summary.empty_rooms_read_occupied,
+        empty_rooms_total: m.summary.empty_rooms_total,
+        still_person_held_without_false_presence: m
+            .summary
+            .still_person_held_without_false_presence,
+        still_person_total: m.summary.still_person_total,
+        walk_ins_caught: entries
+            .iter()
+            .filter(|e| e.is_some_and(|s| s <= WALK_IN_SECS))
+            .count(),
+        walk_ins_total: entries.len(),
+        breath_mae_bpm: m
+            .vitals
+            .iter()
+            .map(|(level, v)| (level.clone(), v.breath_mae_bpm))
+            .collect(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -891,6 +964,43 @@ fn regressions(now: &Metrics, base: &Metrics) -> Vec<String> {
             }
         }
     }
+    for (set, b) in &base.seed_sets {
+        let Some(n) = now.seed_sets.get(set) else {
+            bad.push(format!("seed set {set}: missing"));
+            continue;
+        };
+        if n.empty_rooms_read_occupied > b.empty_rooms_read_occupied {
+            bad.push(format!(
+                "seed set {set}: {} empty rooms read occupied (baseline {})",
+                n.empty_rooms_read_occupied, b.empty_rooms_read_occupied
+            ));
+        }
+        if n.still_person_held_without_false_presence < b.still_person_held_without_false_presence {
+            bad.push(format!(
+                "seed set {set}: still person held in {} (baseline {})",
+                n.still_person_held_without_false_presence,
+                b.still_person_held_without_false_presence
+            ));
+        }
+        if n.walk_ins_caught < b.walk_ins_caught {
+            bad.push(format!(
+                "seed set {set}: {} walk-ins caught (baseline {})",
+                n.walk_ins_caught, b.walk_ins_caught
+            ));
+        }
+        for (level, bv) in &b.breath_mae_bpm {
+            let nv = n.breath_mae_bpm.get(level).copied().flatten();
+            match (nv, bv) {
+                (Some(nv), Some(bv)) if nv > bv + TOL_BPM => bad.push(format!(
+                    "seed set {set}: breathing error at {level} {nv:.2} BPM (baseline {bv:.2})"
+                )),
+                (None, Some(bv)) => bad.push(format!(
+                    "seed set {set}: no breathing estimate at {level} (baseline {bv:.2} BPM)"
+                )),
+                _ => {}
+            }
+        }
+    }
     // Heart rate is not ratcheted: it is at chance level and is being hidden
     // (plan item 0.4), so its number is reported only.
     for (level, b) in &base.vitals {
@@ -968,6 +1078,103 @@ fn report_markdown(m: &Metrics, t: &Timing) -> String {
         per(t.vitals_us),
         per(t.total_us)
     );
+    if !m.seed_sets.is_empty() {
+        let _ = writeln!(
+            r,
+            "\n### Gate G1 across {} seed sets (SYNTHETIC)\n",
+            m.seed_sets.len()
+        );
+        let sets: Vec<&String> = m.seed_sets.keys().collect();
+        let _ = writeln!(
+            r,
+            "| Criterion | Target | {} | Met |\n|---|---|{}---|",
+            sets.iter()
+                .map(|s| format!("Set {s}"))
+                .collect::<Vec<_>>()
+                .join(" | "),
+            "---|".repeat(sets.len())
+        );
+        let mut row = |label: &str, target: &str, cells: Vec<(String, bool)>| {
+            let met = cells.iter().all(|(_, ok)| *ok);
+            let _ = writeln!(
+                r,
+                "| {label} | {target} | {} | {} |",
+                cells
+                    .iter()
+                    .map(|(c, _)| c.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+                if met { "yes" } else { "no" }
+            );
+        };
+        row(
+            "Empty rooms read occupied",
+            "0",
+            m.seed_sets
+                .values()
+                .map(|g| {
+                    (
+                        format!("{} of {}", g.empty_rooms_read_occupied, g.empty_rooms_total),
+                        g.empty_rooms_read_occupied == 0,
+                    )
+                })
+                .collect(),
+        );
+        row(
+            "Still person held, no false presence before entry",
+            "all",
+            m.seed_sets
+                .values()
+                .map(|g| {
+                    (
+                        format!(
+                            "{} of {}",
+                            g.still_person_held_without_false_presence, g.still_person_total
+                        ),
+                        g.still_person_held_without_false_presence == g.still_person_total,
+                    )
+                })
+                .collect(),
+        );
+        row(
+            &format!("Walk-ins caught within {WALK_IN_SECS:.0} s"),
+            "all",
+            m.seed_sets
+                .values()
+                .map(|g| {
+                    (
+                        format!("{} of {}", g.walk_ins_caught, g.walk_ins_total),
+                        g.walk_ins_caught == g.walk_ins_total,
+                    )
+                })
+                .collect(),
+        );
+        let levels: std::collections::BTreeSet<String> = m
+            .seed_sets
+            .values()
+            .flat_map(|g| g.breath_mae_bpm.keys().cloned())
+            .collect();
+        for level in levels {
+            row(
+                &format!("Breathing error at {level}"),
+                &format!("≤ {G1_BREATH_MAE_BPM} BPM"),
+                m.seed_sets
+                    .values()
+                    .map(|g| match g.breath_mae_bpm.get(&level).copied().flatten() {
+                        Some(v) => (format!("{v:.2}"), v <= G1_BREATH_MAE_BPM),
+                        None => ("none".into(), false),
+                    })
+                    .collect(),
+            );
+        }
+        let per_frame = t.total_us / t.frames.max(1) as f64;
+        let _ = writeln!(
+            r,
+            "| Per-frame time, all sets (MEASURED) | ≤ {G1_FRAME_US:.0} µs | {per_frame:.0} µs{} | {} |",
+            " | ".repeat(sets.len().saturating_sub(1)),
+            if per_frame <= G1_FRAME_US { "yes" } else { "no" }
+        );
+    }
     if !m.calibration.is_empty() {
         let _ = writeln!(
             r,
@@ -1108,6 +1315,25 @@ fn generator_is_deterministic_and_scenario_set_is_stable() {
 }
 
 #[test]
+fn seed_sets_change_only_the_seeds() {
+    let base = scenarios();
+    let other = scenarios_for(1);
+    assert_eq!(base.len(), other.len());
+    for (a, b) in base.iter().zip(&other) {
+        assert_eq!(a.name, b.name);
+        assert!(a.family == b.family && a.person == b.person);
+        assert_eq!(a.seconds, b.seconds);
+        assert_eq!(a.dyn_db, b.dyn_db);
+        assert_eq!(b.seed, a.seed + SEED_SET_STRIDE);
+    }
+    // New breathing and heart rates come from the offset picker.
+    assert!(base
+        .iter()
+        .zip(&other)
+        .any(|(a, b)| a.breath_bpm != b.breath_bpm));
+}
+
+#[test]
 fn calibration_segment_records_the_same_room_with_fresh_noise() {
     let mut sc = scenarios().remove(0);
     sc.seconds = 2.0;
@@ -1135,15 +1361,25 @@ fn calibration_segment_records_the_same_room_with_fresh_noise() {
 #[ignore = "slow in debug builds; CI runs it with --release (scenario-harness.yml)"]
 fn scenario_harness() {
     let mut timing = Timing::default();
-    let runs: Vec<(Scenario, Vec<FrameOut>)> = scenarios()
-        .into_iter()
-        .map(|sc| {
-            let g = generate(&sc);
-            let out = replay(&sc, &g, &mut timing);
-            (sc, out)
-        })
-        .collect();
+    let run_set = |set: u64, timing: &mut Timing| -> Vec<(Scenario, Vec<FrameOut>)> {
+        scenarios_for(set)
+            .into_iter()
+            .map(|sc| {
+                let g = generate(&sc);
+                let out = replay(&sc, &g, timing);
+                (sc, out)
+            })
+            .collect()
+    };
+    let runs = run_set(0, &mut timing);
     let mut metrics = score(&runs);
+    metrics.seed_sets.insert("0".into(), gate_summary(&runs));
+    for set in 1..SEED_SETS {
+        let other = run_set(set, &mut timing);
+        metrics
+            .seed_sets
+            .insert(set.to_string(), gate_summary(&other));
+    }
     metrics.calibration = calibration_runs();
     let report = report_markdown(&metrics, &timing);
     eprintln!("{report}");

@@ -1,0 +1,13 @@
+# Code owners for the Justinwold88/RuView fork.
+# GitHub requests a review from these owners on every pull request that
+# touches matching paths. Later rules override earlier ones.
+#
+# Fork-only: upstream (ruvnet/RuView) maintainers decide their own owners,
+# so this file is not part of any upstream pull request.
+
+*                       @Justinwold88
+
+# Repository process, CI, and community files
+/.github/               @Justinwold88
+/CONTRIBUTING.md        @Justinwold88
+/SECURITY.md            @Justinwold88

@@ -13,6 +13,8 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +45,9 @@ pub const NOISY_THRESHOLD: f64 = 0.12;
 pub const MAX_PRESENCE_THRESHOLD: f64 = 0.25;
 /// Fewest post-warm-up frames a run needs (10 s at 20 Hz).
 pub const MIN_CALIBRATION_FRAMES: usize = 200;
+/// A sequence jump larger than this (or backwards) is a node restart or
+/// counter reset, not lost frames.
+const MAX_SEQUENCE_GAP: u32 = 1000;
 
 /// Motion level for a smoothed score, given the node's presence threshold.
 ///
@@ -80,8 +85,9 @@ pub struct CalibrationSample {
 pub struct CalibrationCollector {
     scores: Vec<f64>,
     snr_db: Vec<f64>,
-    first_sequence: Option<u32>,
     last_sequence: Option<u32>,
+    /// Frames missing between consecutive sequence numbers.
+    missing: u64,
     first_elapsed: Option<f64>,
     last_elapsed: f64,
 }
@@ -95,6 +101,16 @@ pub enum CalibrationError {
     /// The room produced more motion than any usable empty room: someone
     /// moved, or the link is too noisy to sense.
     TooMuchMotion { empty_p99: f64 },
+}
+
+impl CalibrationError {
+    /// Stable machine-readable code, the same as the serialized `code` tag.
+    pub fn code(&self) -> &'static str {
+        match self {
+            CalibrationError::TooFewFrames { .. } => "too_few_frames",
+            CalibrationError::TooMuchMotion { .. } => "too_much_motion",
+        }
+    }
 }
 
 impl std::fmt::Display for CalibrationError {
@@ -169,7 +185,12 @@ impl CalibrationCollector {
         if snr.is_finite() {
             self.snr_db.push(snr);
         }
-        self.first_sequence.get_or_insert(s.sequence);
+        if let Some(prev) = self.last_sequence {
+            let step = s.sequence.wrapping_sub(prev);
+            if (2..=MAX_SEQUENCE_GAP).contains(&step) {
+                self.missing += u64::from(step - 1);
+            }
+        }
         self.last_sequence = Some(s.sequence);
         self.first_elapsed.get_or_insert(s.elapsed_secs);
         self.last_elapsed = s.elapsed_secs;
@@ -202,15 +223,8 @@ impl CalibrationCollector {
         } else {
             0.0
         };
-        let expected = match (self.first_sequence, self.last_sequence) {
-            (Some(a), Some(b)) => b.wrapping_sub(a) as u64 + 1,
-            _ => frames as u64,
-        };
-        let loss_pct = if expected > frames as u64 {
-            100.0 * (expected - frames as u64) as f64 / expected as f64
-        } else {
-            0.0
-        };
+        let expected = frames as u64 + self.missing;
+        let loss_pct = 100.0 * self.missing as f64 / expected as f64;
         let mut snr = self.snr_db.clone();
         snr.sort_by(f64::total_cmp);
         let snr_db = percentile(&snr, 0.5);
@@ -364,6 +378,36 @@ impl CalibrationRun {
             .iter()
             .map(|(id, c)| (*id, c.finish()))
             .collect()
+    }
+}
+
+/// Orders background saves so the file always ends up holding the newest
+/// state, even when two saves are queued close together.
+#[derive(Debug, Default)]
+pub struct SaveQueue {
+    latest: AtomicU64,
+    lock: Mutex<()>,
+}
+
+impl SaveQueue {
+    /// Reserve a generation for a save about to be queued.
+    pub fn next(&self) -> u64 {
+        self.latest.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// Write `nodes` unless a newer save was queued after `generation`.
+    /// Returns whether it wrote.
+    pub fn save_if_latest(
+        &self,
+        generation: u64,
+        path: &Path,
+        nodes: &BTreeMap<u8, MotionCalibration>,
+    ) -> std::io::Result<bool> {
+        let _guard = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.latest.load(Ordering::SeqCst) != generation {
+            return Ok(false);
+        }
+        save(path, nodes).map(|()| true)
     }
 }
 
@@ -572,10 +616,49 @@ mod tests {
     }
 
     #[test]
+    fn error_codes_match_the_serialized_tag() {
+        for e in [
+            CalibrationError::TooFewFrames { frames: 1 },
+            CalibrationError::TooMuchMotion { empty_p99: 0.5 },
+        ] {
+            assert_eq!(serde_json::to_value(&e).unwrap()["code"], e.code());
+        }
+    }
+
+    #[test]
     fn missing_sequence_numbers_count_as_loss() {
         // Every other frame lost: sequence advances by 2.
         let cal = run((0..1200).map(|_| 0.01), 2).finish().unwrap();
         assert!((cal.link_quality.loss_pct - 50.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn a_sequence_reset_is_not_loss() {
+        let mut c = CalibrationCollector::default();
+        for (i, seq) in (500u32..1100).chain(0..600).enumerate() {
+            c.push(CalibrationSample {
+                smoothed_motion: 0.01,
+                rssi_dbm: -50.0,
+                noise_floor_dbm: -90.0,
+                sequence: seq,
+                elapsed_secs: i as f64 / 20.0,
+            });
+        }
+        assert_eq!(c.finish().unwrap().link_quality.loss_pct, 0.0);
+    }
+
+    #[test]
+    fn only_the_newest_queued_save_writes() {
+        let dir = std::env::temp_dir().join(format!("ruview-motion-queue-{}", std::process::id()));
+        let path = dir.join(STORE_FILE);
+        let q = SaveQueue::default();
+        let older = q.next();
+        let newer = q.next();
+        let nodes = BTreeMap::new();
+        assert!(!q.save_if_latest(older, &path, &nodes).unwrap());
+        assert!(q.save_if_latest(newer, &path, &nodes).unwrap());
+        assert!(path.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

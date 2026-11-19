@@ -563,11 +563,8 @@ fn calibration_runs() -> BTreeMap<String, LinkRuns> {
                     cal.presence_threshold
                 }
                 Err(error) => {
-                    let code = serde_json::to_value(&error)
-                        .ok()
-                        .and_then(|v| v.get("code").and_then(|c| c.as_str()).map(str::to_owned))
-                        .unwrap_or_else(|| "unknown".into());
-                    runs.refused.insert(sc.name.clone(), code);
+                    runs.refused
+                        .insert(sc.name.clone(), error.code().to_owned());
                     motion_calibration::DEFAULT_PRESENCE_THRESHOLD
                 }
             };

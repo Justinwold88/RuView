@@ -2272,6 +2272,8 @@ struct AppStateInner {
     motion_calibration_run: Option<(std::time::Instant, motion_calibration::CalibrationRun)>,
     /// Per-node results of the last finished run.
     motion_calibration_last: Option<MotionCalibrationResults>,
+    /// Keeps background saves of `motion_calibrations` in order.
+    motion_calibration_saves: Arc<motion_calibration::SaveQueue>,
     /// ADR-262 P3: the live RuField surface. Holds the dedicated ed25519 signer
     /// + a bounded ring of recent signed `FieldEvent`s + the `/ws/field`
     /// broadcast topic. The governed sensing cycle calls `emit()` on it once per
@@ -3296,6 +3298,7 @@ impl AppStateInner {
             motion_calibrations: BTreeMap::new(),
             motion_calibration_run: None,
             motion_calibration_last: None,
+            motion_calibration_saves: Arc::default(),
             field_surface: Arc::new(RwLock::new(rufield_surface::FieldSurface::from_env())),
             pose_physics: pose_physics::PosePhysicsRuntime::new(
                 wifi_densepose_physics::PhysicsConfig::default(),
@@ -4925,8 +4928,10 @@ fn finish_motion_calibration_if_due(s: &mut AppStateInner) {
 fn persist_motion_calibrations(s: &AppStateInner) {
     let path = s.data_dir.join(motion_calibration::STORE_FILE);
     let nodes = s.motion_calibrations.clone();
+    let queue = s.motion_calibration_saves.clone();
+    let generation = queue.next();
     let write = move || {
-        if let Err(error) = motion_calibration::save(&path, &nodes) {
+        if let Err(error) = queue.save_if_latest(generation, &path, &nodes) {
             warn!(path = %path.display(), %error, "could not save motion calibration");
         }
     };
@@ -15770,6 +15775,7 @@ async fn main() {
         motion_calibrations,
         motion_calibration_run: None,
         motion_calibration_last: None,
+        motion_calibration_saves: Arc::default(),
         field_surface: field_surface.clone(),
         pose_physics: pose_physics::PosePhysicsRuntime::new(
             wifi_densepose_physics::PhysicsConfig::default(),

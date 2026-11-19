@@ -16,22 +16,42 @@ RuView publishes its full WiFi-sensing capability set to **Home Assistant** via 
 
 ### 2. Start the publisher
 
+Replace `192.168.1.10` with your broker's address, and `192.168.1.0/24` with the address or subnet of your ESP32 nodes.
+
+**Docker** (recommended for non-developers):
+
 ```bash
-# Docker (recommended for non-developers):
+export MQTT_PASSWORD='your-broker-password'
+# Protects the REST/WebSocket API on :3000. The image refuses to start on
+# 0.0.0.0 without it (#864); keep the value if you use the API or UI.
+export RUVIEW_API_TOKEN="$(openssl rand -hex 32)"
+
 docker run --rm --net=host \
-    ruvnet/wifi-densepose:0.7.0 \
-    --source esp32 \
+    -e MQTT_PASSWORD -e RUVIEW_API_TOKEN \
+    -e CSI_SOURCE=esp32 \
+    -e RUVIEW_UDP_ALLOW=192.168.1.0/24 \
+    ruvnet/wifi-densepose:latest \
     --mqtt --mqtt-host 192.168.1.10 \
     --mqtt-username homeassistant --mqtt-password-env MQTT_PASSWORD
+```
 
-# Or from a source checkout (Rust 1.78+):
+- `-e MQTT_PASSWORD` passes the password into the container; `--mqtt-password-env` only names the variable.
+- Pick the data source with `CSI_SOURCE`, not `--source`.
+- `RUVIEW_UDP_ALLOW` lets ESP32 frames in. Without it the CSI receiver stays on loopback ([ADR-296](../adr/ADR-296-sensor-data-plane-bind-hardening.md), [#2089](https://github.com/ruvnet/RuView/issues/2089)) and no node appears.
+
+**From a source checkout** (the Rust workspace lives in `v2/`; `v2/rust-toolchain.toml` pins Rust 1.89 and rustup installs it):
+
+```bash
+cd v2
 MQTT_PASSWORD='your-broker-password' \
-cargo run --release -p wifi-densepose-sensing-server \
-    --features mqtt -- \
-    --source esp32 --mqtt \
-    --mqtt-host 192.168.1.10 \
+cargo run --release -p wifi-densepose-sensing-server --features mqtt -- \
+    --source esp32 \
+    --udp-bind 0.0.0.0 --udp-allow 192.168.1.0/24 \
+    --mqtt --mqtt-host 192.168.1.10 \
     --mqtt-username homeassistant
 ```
+
+**No hardware yet?** Use `-e CSI_SOURCE=simulated` (Docker) or `--source simulated` (source checkout) and drop the UDP settings. The server then generates synthetic CSI, so Home Assistant shows the devices and entities, but every value is made up.
 
 Within ~5 seconds of the first CSI frame, Home Assistant should auto-create:
 
@@ -50,7 +70,7 @@ Ctrl-C (SIGINT/SIGTERM) stops the server. It does **not** publish `offline` firs
 
 Names below are the `unique_id` slugs; Home Assistant assigns friendly names automatically. Every entity has its own availability topic (`…/<slug>/availability`, retained). An entity is `online` only while the server has a real source for it. Otherwise it is `offline`, no state is published, and Home Assistant shows **unavailable** rather than a made-up value.
 
-### Raw signals (9 entities)
+### Raw signals (8 entities, 9 with `--mqtt-publish-heart-rate`)
 
 | HA entity | Slug | HA component | Unit | Source | Available when |
 |---|---|---|---|---|---|
@@ -68,7 +88,7 @@ The server publishes heart and breathing rate only after explicit calibration, w
 
 Heart rate is **not announced by default**. Heart rate from single-antenna ESP32 CSI has not been validated, and the server's SYNTHETIC scenario harness shows errors at chance level. Pass `--mqtt-publish-heart-rate` (or set `RUVIEW_MQTT_PUBLISH_HEART_RATE=1`) to announce it, along with `possible_distress`, which is derived from it. Do not use either for health or safety decisions.
 
-### Semantic automation primitives (6 entities)
+### Semantic automation primitives (5 entities, 6 with `--mqtt-publish-heart-rate`)
 
 Small finite-state machines run inside the server, one set per node, sampled once per second ([ADR-115 §3.12](../adr/ADR-115-home-assistant-integration.md#312-semantic-automation-primitives-ha-mind), P4.5). All of them are unavailable for the first 60 s after start (warmup). After that each publishes its current state, then on every change.
 

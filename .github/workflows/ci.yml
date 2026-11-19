@@ -46,6 +46,11 @@ jobs:
         pip install -r requirements.txt
         pip install black flake8 mypy bandit safety
 
+    # Stub-based tests of docker/docker-entrypoint.sh argument handling and
+    # the #864 fail-closed check. Seconds to run; no Docker needed.
+    - name: Docker entrypoint tests
+      run: bash tests/test_docker_entrypoint.sh
+
     - name: Code formatting check (Black)
       continue-on-error: true
       run: black --check --diff archive/v1/src archive/v1/tests

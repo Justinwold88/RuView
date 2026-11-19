@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Docker: operator flags replace the image defaults.** The entrypoint
+  added `--source`, `--tick-ms`, `--ui-path`, `--http-port` and `--ws-port`
+  before the operator's own flags, so `docker run <image> --source esp32`
+  exited with "the argument '--source <SOURCE>' cannot be used multiple
+  times". Each default is now added only when the flag is absent.
+  `--bind-addr` still always comes from `RUVIEW_BIND_ADDR`, so the #864
+  fail-closed check cannot be bypassed. `tests/test_docker_entrypoint.sh`
+  had stopped running at its first case after #864; it is repaired,
+  extended, and now runs in CI. The Home Assistant quick start in
+  `docs/integrations/home-assistant.md` is corrected to commands that run:
+  it passes the MQTT password and an API token into the container, allows
+  ESP32 UDP in, runs `cargo` from `v2/`, names the pinned Rust 1.89, and
+  adds a simulated-source path for trying it without hardware.
+
 - **Unvalidated outputs are hidden or labelled.** Home Assistant no longer
   gets a heart-rate sensor or the `possible_distress` state (derived from
   heart rate) unless the server runs with `--mqtt-publish-heart-rate`

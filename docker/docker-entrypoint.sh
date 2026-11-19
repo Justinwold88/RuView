@@ -150,14 +150,29 @@ if [ "${1#-}" != "$1" ] || [ -z "$1" ]; then
         fi
     fi
 
-    set -- /app/sensing-server \
-        --source "${CSI_SOURCE:-auto}" \
-        --tick-ms 100 \
-        --ui-path /app/ui \
-        --http-port 3000 \
-        --ws-port 3001 \
-        --bind-addr "${RUVIEW_BIND_ADDR:-0.0.0.0}" \
-        "$@"
+    # Defaults are added only for flags the operator did not pass. clap
+    # rejects a repeated flag, so `docker run <image> --source esp32` used to
+    # exit with "the argument '--source <SOURCE>' cannot be used multiple
+    # times". --bind-addr is still always taken from RUVIEW_BIND_ADDR: the
+    # #864 check above reads that variable, so a --bind-addr argument must
+    # not be able to bypass it (a second --bind-addr still fails loudly).
+    __given() {
+        __flag="$1"
+        shift
+        for __a in "$@"; do
+            case "$__a" in
+                "$__flag"|"$__flag"=*) return 0 ;;
+            esac
+        done
+        return 1
+    }
+    set -- --bind-addr "${RUVIEW_BIND_ADDR:-0.0.0.0}" "$@"
+    __given --ws-port "$@" || set -- --ws-port 3001 "$@"
+    __given --http-port "$@" || set -- --http-port 3000 "$@"
+    __given --ui-path "$@" || set -- --ui-path /app/ui "$@"
+    __given --tick-ms "$@" || set -- --tick-ms 100 "$@"
+    __given --source "$@" || set -- --source "${CSI_SOURCE:-auto}" "$@"
+    set -- /app/sensing-server "$@"
 fi
 
 exec "$@"

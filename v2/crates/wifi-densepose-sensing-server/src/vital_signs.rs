@@ -55,6 +55,10 @@ const BREATHING_TOP_STREAMS: usize = 6;
 /// best stream's are combined. When one stream carries the breathing and the
 /// rest are noise, PCA over equally weighted noise streams loses it.
 const BREATHING_STREAM_KEEP: f64 = 0.75;
+/// Breathing evidence (plan item 1.3) is measured on this many of the most
+/// recent seconds, over this many top-ranked streams.
+const EVIDENCE_WINDOW_SECS: f64 = 20.0;
+const EVIDENCE_STREAMS: usize = 8;
 /// If the spectrum at half the peak frequency reaches this share of the
 /// peak, the half frequency is taken: amplitude breathing often shows a
 /// strong second harmonic when the reflection sits near a Fresnel-zone edge.
@@ -128,6 +132,11 @@ pub struct VitalSignDetector {
     /// Last spectral estimate: (breathing, breathing confidence, heart rate,
     /// heartbeat confidence). `None` until the first frame is processed.
     last_estimate: Option<(Option<f64>, f64, Option<f64>, f64)>,
+    /// Breathing evidence from the last spectral estimate.
+    last_breathing_evidence: Option<f64>,
+    /// Counts spectral estimates, so callers can tell a fresh evidence
+    /// value from a repeated one.
+    estimates: u64,
 }
 
 /// Spectral estimates are refreshed once per this many seconds of CSI.
@@ -163,6 +172,8 @@ impl VitalSignDetector {
             estimate_interval_frames: estimate_interval_frames(sample_rate),
             frames_since_estimate: 0,
             last_estimate: None,
+            last_breathing_evidence: None,
+            estimates: 0,
         }
     }
 
@@ -245,7 +256,10 @@ impl VitalSignDetector {
             match self.last_estimate {
                 Some(cached) if self.frames_since_estimate < self.estimate_interval_frames => cached,
                 _ => {
-                    let (br, br_conf) = self.extract_breathing();
+                    let breathing = self.estimate_breathing();
+                    let (br, br_conf) = (breathing.bpm, breathing.confidence);
+                    self.last_breathing_evidence = breathing.evidence;
+                    self.estimates += 1;
                     let (hr, hr_conf) = self.extract_heartbeat();
                     let fresh = (br, br_conf, hr, hr_conf);
                     self.last_estimate = Some(fresh);
@@ -270,10 +284,31 @@ impl VitalSignDetector {
     /// breathing-band energy, combine the top few with PCA, and take the
     /// spectral peak of the first component. Returns (rate_bpm, confidence).
     pub fn extract_breathing(&self) -> (Option<f64>, f64) {
+        let e = self.estimate_breathing();
+        (e.bpm, e.confidence)
+    }
+
+    fn estimate_breathing(&self) -> BreathingEstimate {
         if self.breathing_buffer.len() < MIN_BREATHING_SAMPLES {
-            return (None, 0.0);
+            return BreathingEstimate::default();
         }
         self.breathing_streams.estimate()
+    }
+
+    /// How periodic the breathing band is right now: across the streams with
+    /// the most breathing-band energy, the mean ratio of the band's spectral
+    /// peak to the median of 0.5-2 Hz, over the last 20 s. A still, breathing
+    /// person scores far higher than an empty room or a walking person
+    /// (SYNTHETIC: empty rooms up to 19, a seated person typically 130).
+    /// Updated once per second; `None` until 20 s of CSI.
+    pub fn breathing_evidence(&self) -> Option<f64> {
+        self.last_breathing_evidence
+    }
+
+    /// Number of spectral estimates so far; changes when
+    /// [`Self::breathing_evidence`] is refreshed.
+    pub fn estimate_count(&self) -> u64 {
+        self.estimates
     }
 
     /// Extract heart rate from the heartbeat buffer via FFT.
@@ -422,6 +457,7 @@ impl VitalSignDetector {
         self.frame_count = 0;
         self.frames_since_estimate = 0;
         self.last_estimate = None;
+        self.last_breathing_evidence = None;
     }
 
     /// Retune temporal windows to an observed CSI clock. Changes smaller than
@@ -464,6 +500,15 @@ impl VitalSignDetector {
 }
 
 // ── Breathing streams (plan item 1.2) ─────────────────────────────────────
+
+/// One breathing estimate.
+#[derive(Debug, Default, Clone, Copy)]
+struct BreathingEstimate {
+    bpm: Option<f64>,
+    confidence: f64,
+    /// See [`VitalSignDetector::breathing_evidence`].
+    evidence: Option<f64>,
+}
 
 /// Rolling, block-averaged history of one feature vector per frame:
 /// per-subcarrier log-amplitude with the frame's mean removed, the frame's
@@ -532,11 +577,11 @@ impl BreathingStreams {
         restarted
     }
 
-    /// Breathing rate and confidence from the stored history.
-    fn estimate(&self) -> (Option<f64>, f64) {
+    /// Breathing rate, confidence and evidence from the stored history.
+    fn estimate(&self) -> BreathingEstimate {
         let n = self.samples.len();
         if (n as f64) < MIN_BREATHING_SECS * self.rate_hz || n < 8 {
-            return (None, 0.0);
+            return BreathingEstimate::default();
         }
         let width = self.samples[0].len();
         // Detrended streams, stream-major.
@@ -550,7 +595,7 @@ impl BreathingStreams {
         let k_lo = (BREATHING_MIN_HZ * n as f64 / self.rate_hz).ceil() as usize;
         let k_hi = ((BREATHING_MAX_HZ * n as f64 / self.rate_hz).floor() as usize).min(n / 2);
         if k_lo == 0 || k_lo > k_hi {
-            return (None, 0.0);
+            return BreathingEstimate::default();
         }
         let window: Vec<f64> = (0..n)
             .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f64 / (n as f64 - 1.0)).cos()))
@@ -593,9 +638,10 @@ impl BreathingStreams {
             })
             .collect();
         if ranked.is_empty() {
-            return (None, 0.0);
+            return BreathingEstimate::default();
         }
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let evidence = self.evidence(&ranked);
         let keep = ranked[0].0 * BREATHING_STREAM_KEEP;
         ranked.retain(|(share, _)| *share >= keep);
         ranked.truncate(BREATHING_TOP_STREAMS);
@@ -612,14 +658,79 @@ impl BreathingStreams {
             })
             .collect();
         let pc = first_principal_component(&chosen);
-        compute_spectral_peak(
+        let (bpm, confidence) = compute_spectral_peak(
             &pc,
             self.rate_hz,
             BREATHING_MIN_HZ,
             BREATHING_MAX_HZ,
             BREATHING_FFT_PAD,
             Some(BREATHING_SUBHARMONIC_SHARE),
-        )
+        );
+        BreathingEstimate {
+            bpm,
+            confidence,
+            evidence,
+        }
+    }
+
+    /// Mean, over the top-ranked streams, of the breathing band's peak power
+    /// divided by the median power in 0.5-2 Hz, on the last
+    /// [`EVIDENCE_WINDOW_SECS`]. Scale-free, so it does not depend on the
+    /// link's gain or noise level.
+    fn evidence(&self, ranked: &[(f64, usize)]) -> Option<f64> {
+        let take = (EVIDENCE_WINDOW_SECS * self.rate_hz).round() as usize;
+        let ref_hi = 2.0_f64.min(self.rate_hz / 2.0);
+        if self.samples.len() < take || take < 8 || ref_hi <= BREATHING_MAX_HZ {
+            return None;
+        }
+        let start = self.samples.len() - take;
+        let fft_len = take.next_power_of_two();
+        let res = self.rate_hz / fft_len as f64;
+        let ratios: Vec<f64> = ranked
+            .iter()
+            .take(EVIDENCE_STREAMS)
+            .filter_map(|(_, j)| {
+                let x = detrend(
+                    &self
+                        .samples
+                        .iter()
+                        .skip(start)
+                        .map(|s| s[*j])
+                        .collect::<Vec<_>>(),
+                );
+                let mut signal = vec![0.0; fft_len];
+                for (i, v) in x.iter().enumerate() {
+                    let w = 0.5 * (1.0 - (2.0 * PI * i as f64 / (take as f64 - 1.0)).cos());
+                    signal[i] = v * w;
+                }
+                let power: Vec<f64> = fft_magnitude(&signal).iter().map(|m| m * m).collect();
+                let band_peak = power
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| {
+                        let f = *k as f64 * res;
+                        (BREATHING_MIN_HZ..=BREATHING_MAX_HZ).contains(&f)
+                    })
+                    .map(|(_, p)| *p)
+                    .fold(0.0, f64::max);
+                let mut reference: Vec<f64> = power
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| {
+                        let f = *k as f64 * res;
+                        f > BREATHING_MAX_HZ && f <= ref_hi
+                    })
+                    .map(|(_, p)| *p)
+                    .collect();
+                if reference.is_empty() {
+                    return None;
+                }
+                reference.sort_by(f64::total_cmp);
+                let median = reference[reference.len() / 2];
+                (median > 0.0).then(|| band_peak / median)
+            })
+            .collect();
+        (!ratios.is_empty()).then(|| ratios.iter().sum::<f64>() / ratios.len() as f64)
     }
 }
 

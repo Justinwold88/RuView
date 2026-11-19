@@ -433,6 +433,17 @@ The threshold rule (1.3 times the empty room's 99th-percentile motion score) and
 - On a typical link (25 dB SNR) calibration cut walking frames from 86–100% to 69–88%, but still caught all 5 walk-ins within 2 s.
 - It does not help a person sitting still: their motion score looks like an empty room's.
 
+#### People sitting still
+
+Someone reading or asleep barely moves, so their motion score looks like an empty room's. Each node therefore also watches how periodic the breathing band is: the peak between 0.1 and 0.5 Hz against the background from 0.5 to 2 Hz, over the last 20 s. That ratio is the **breathing evidence**.
+
+- After at least 2 s of clear motion (someone walking in), the node stays present for 30 s. It then stays present as long as the breathing evidence is at least 15, or its 30-second average (each value capped at 20) is at least 10. An empty room averages about 6.
+- Breathing alone never turns a room from empty to occupied unless it is strong (40 or more) for 10 seconds in a row, for example someone already asleep when the server starts.
+- **After someone leaves, presence clears about 40 to 50 seconds later** (SYNTHETIC), because the 20 s evidence window and the 30 s average still hold their breathing for a while.
+- This applies to ESP32 CSI nodes. RSSI-only sources keep motion-only presence.
+
+SYNTHETIC results from the scenario harness: a still person is held for the whole 100–240 s window in all 30 walk-in-and-sit scenarios across six seed sets, and empty-room results are unchanged. These numbers are not yet MEASURED on hardware. The thresholds are a first guess that real-home recordings (plan items 2.4 and 2.5) will retune.
+
 ### ESP32-C5 (Experimental CSI target)
 
 The C5 profile is headless: 2.4 GHz association, 240 MHz application CPU,

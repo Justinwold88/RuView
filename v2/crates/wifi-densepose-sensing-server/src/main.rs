@@ -1156,6 +1156,9 @@ struct NodeState {
     /// Smoothed motion above this reads as presence. Starts at the default
     /// and is replaced by an empty-room calibration (plan item 1.1).
     presence_threshold: f64,
+    /// Plan item 1.3: keeps a still person present while their breathing
+    /// stays periodic.
+    still_hold: StillHold,
     smoothed_hr: f64,
     smoothed_br: f64,
     smoothed_hr_conf: f64,
@@ -1560,6 +1563,7 @@ impl NodeState {
             baseline_motion: 0.0,
             baseline_frames: 0,
             presence_threshold: motion_calibration::DEFAULT_PRESENCE_THRESHOLD,
+            still_hold: StillHold::default(),
             smoothed_hr: 0.0,
             smoothed_br: 0.0,
             smoothed_hr_conf: 0.0,
@@ -4824,7 +4828,17 @@ fn smooth_and_classify_node(ns: &mut NodeState, raw: &mut ClassificationInfo, ra
     ns.smoothed_motion = ns.smoothed_motion * (1.0 - motion_alpha) + adjusted * motion_alpha;
     let sm = ns.smoothed_motion;
 
-    let candidate = motion_calibration::classify_level(sm, ns.presence_threshold).to_string();
+    let mut candidate = motion_calibration::classify_level(sm, ns.presence_threshold).to_string();
+    let held_still = ns.still_hold.update(
+        sm / ns.presence_threshold.max(f64::EPSILON),
+        ns.baseline_frames >= warmup_frames_needed,
+        ns.vital_detector.breathing_evidence(),
+        ns.vital_detector.estimate_count(),
+        fps,
+    );
+    if held_still {
+        candidate = "present_still".to_string();
+    }
 
     if candidate == ns.current_motion_level {
         ns.debounce_counter = 0;
@@ -4843,6 +4857,215 @@ fn smooth_and_classify_node(ns: &mut NodeState, raw: &mut ClassificationInfo, ra
     raw.motion_level = ns.current_motion_level.clone();
     raw.presence = raw.motion_level != "absent";
     raw.confidence = (0.4 + sm * 0.6).clamp(0.0, 1.0);
+}
+
+/// Breathing evidence (see `VitalSignDetector::breathing_evidence`) that
+/// keeps a person present once they have been seen moving. SYNTHETIC: empty
+/// rooms and walking people stayed at or below 13.3; a seated person's
+/// median is about 120.
+const STILL_KEEP_EVIDENCE: f64 = 15.0;
+/// Alternatively, the mean of the last [`STILL_KEEP_MEAN_SECS`] evidence
+/// values, each capped at [`STILL_KEEP_MEAN_CAP`], at or above this keeps
+/// presence. Weakly reflecting sitters hover around 10-20 from second to
+/// second; an empty room's mean stays near 6. The cap stops the strong
+/// values of someone who has just left from holding the mean up for long.
+const STILL_KEEP_MEAN_EVIDENCE: f64 = 10.0;
+const STILL_KEEP_MEAN_SECS: usize = 30;
+const STILL_KEEP_MEAN_CAP: f64 = 20.0;
+/// Evidence that, sustained for [`STILL_ACQUIRE_SECS`], marks a room
+/// occupied without any motion first (someone already asleep when the
+/// server starts).
+const STILL_ACQUIRE_EVIDENCE: f64 = 40.0;
+const STILL_ACQUIRE_SECS: u32 = 10;
+/// Continuous motion needed before the hold can start, and how far above
+/// the presence threshold it must peak, so a brief or marginal noise run in
+/// an empty room is not stretched into presence.
+const STILL_LATCH_MOTION_SECS: f64 = 2.0;
+const STILL_LATCH_PEAK: f64 = 1.5;
+/// Hold after sustained motion stops. After someone sits down the 20 s
+/// evidence window still holds their walk, so breathing needs this long to
+/// show.
+const STILL_SETTLE_SECS: f64 = 30.0;
+/// Hold renewed by each breathing-evidence value at or above
+/// [`STILL_KEEP_EVIDENCE`].
+const STILL_KEEP_SECS: f64 = 10.0;
+
+/// Plan item 1.3: holds a still person present while their breathing is
+/// periodic. Breathing alone can keep presence after motion; it can create
+/// presence only from strong evidence held for several seconds, so an empty
+/// room's noise cannot.
+#[derive(Debug, Default, Clone)]
+struct StillHold {
+    occupied: bool,
+    hold_frames_left: u32,
+    motion_frames: u32,
+    /// Highest motion (as a multiple of the threshold) in the current run.
+    motion_peak: f64,
+    strong_secs: u32,
+    last_estimate: u64,
+    recent_evidence: VecDeque<f64>,
+}
+
+impl StillHold {
+    /// Update with this frame's smoothed motion as a multiple of the
+    /// presence threshold, whether the node's motion baseline has warmed up,
+    /// and the detector's latest breathing evidence; returns whether to
+    /// report a still person even though motion reads absent.
+    fn update(
+        &mut self,
+        motion_ratio: f64,
+        warmed: bool,
+        evidence: Option<f64>,
+        estimate_count: u64,
+        fps: f64,
+    ) -> bool {
+        let frames = |secs: f64| (secs * fps).round().max(1.0) as u32;
+        let motion_present = motion_ratio > 1.0;
+        if motion_present {
+            self.motion_frames = self.motion_frames.saturating_add(1);
+            self.motion_peak = self.motion_peak.max(motion_ratio);
+        } else {
+            self.motion_frames = 0;
+            self.motion_peak = 0.0;
+        }
+        if warmed
+            && self.motion_frames >= frames(STILL_LATCH_MOTION_SECS)
+            && self.motion_peak >= STILL_LATCH_PEAK
+        {
+            self.occupied = true;
+            self.hold_frames_left = self.hold_frames_left.max(frames(STILL_SETTLE_SECS));
+        }
+        if estimate_count != self.last_estimate {
+            // A fresh, once-per-second evidence value.
+            self.last_estimate = estimate_count;
+            if let Some(e) = evidence {
+                self.recent_evidence.push_back(e);
+                while self.recent_evidence.len() > STILL_KEEP_MEAN_SECS {
+                    self.recent_evidence.pop_front();
+                }
+            }
+            let mean = (self.recent_evidence.len() == STILL_KEEP_MEAN_SECS).then(|| {
+                self.recent_evidence
+                    .iter()
+                    .map(|e| e.min(STILL_KEEP_MEAN_CAP))
+                    .sum::<f64>()
+                    / STILL_KEEP_MEAN_SECS as f64
+            });
+            let keep = evidence.is_some_and(|e| e >= STILL_KEEP_EVIDENCE)
+                || mean.is_some_and(|m| m >= STILL_KEEP_MEAN_EVIDENCE);
+            if self.occupied && keep {
+                self.hold_frames_left = self.hold_frames_left.max(frames(STILL_KEEP_SECS));
+            }
+            if evidence.is_some_and(|e| e >= STILL_ACQUIRE_EVIDENCE) {
+                self.strong_secs += 1;
+            } else {
+                self.strong_secs = 0;
+            }
+            if warmed && self.strong_secs >= STILL_ACQUIRE_SECS {
+                self.occupied = true;
+                self.hold_frames_left = self.hold_frames_left.max(frames(STILL_KEEP_SECS));
+            }
+        }
+        if motion_present {
+            return false;
+        }
+        self.hold_frames_left = self.hold_frames_left.saturating_sub(1);
+        if self.hold_frames_left == 0 {
+            self.occupied = false;
+        }
+        self.occupied
+    }
+}
+
+#[cfg(test)]
+mod still_hold_tests {
+    use super::*;
+
+    const FPS: f64 = 20.0;
+
+    /// Feed `secs` of frames with a fixed motion ratio and, once per second,
+    /// a fresh evidence value. Returns the share of frames held as still.
+    fn run(
+        h: &mut StillHold,
+        secs: f64,
+        motion_ratio: f64,
+        evidence: Option<f64>,
+        seq: &mut u64,
+    ) -> f64 {
+        let n = (secs * FPS) as usize;
+        let mut held = 0;
+        for i in 0..n {
+            if i % FPS as usize == 0 {
+                *seq += 1;
+            }
+            if h.update(motion_ratio, true, evidence, *seq, FPS) {
+                held += 1;
+            }
+        }
+        held as f64 / n as f64
+    }
+
+    #[test]
+    fn a_brief_or_marginal_motion_run_does_not_latch() {
+        let mut seq = 0;
+        let mut h = StillHold::default();
+        // 1.5 s of strong motion: too short.
+        run(&mut h, 1.5, 3.0, None, &mut seq);
+        assert_eq!(run(&mut h, 5.0, 0.5, None, &mut seq), 0.0);
+        // 5 s just over the threshold: never 1.5x it.
+        run(&mut h, 5.0, 1.2, None, &mut seq);
+        assert_eq!(run(&mut h, 5.0, 0.5, None, &mut seq), 0.0);
+    }
+
+    #[test]
+    fn sustained_motion_holds_for_the_settle_time_then_lets_go() {
+        let mut seq = 0;
+        let mut h = StillHold::default();
+        run(&mut h, 3.0, 3.0, None, &mut seq);
+        // Held for the settle time after motion stops, then released.
+        assert_eq!(run(&mut h, STILL_SETTLE_SECS - 0.5, 0.5, Some(5.0), &mut seq), 1.0);
+        run(&mut h, 1.0, 0.5, Some(5.0), &mut seq);
+        assert_eq!(run(&mut h, 5.0, 0.5, Some(5.0), &mut seq), 0.0);
+    }
+
+    #[test]
+    fn breathing_evidence_keeps_a_still_person() {
+        let mut seq = 0;
+        let mut h = StillHold::default();
+        run(&mut h, 3.0, 3.0, None, &mut seq);
+        assert_eq!(run(&mut h, 300.0, 0.5, Some(120.0), &mut seq), 1.0);
+        // A weak sitter: below the instant threshold, but the capped mean
+        // stays above 10.
+        assert_eq!(run(&mut h, 300.0, 0.5, Some(13.0), &mut seq), 1.0);
+        // Once the room is empty (evidence about 6) presence clears.
+        run(&mut h, 60.0, 0.5, Some(6.0), &mut seq);
+        assert_eq!(run(&mut h, 10.0, 0.5, Some(6.0), &mut seq), 0.0);
+    }
+
+    #[test]
+    fn empty_room_evidence_never_creates_presence() {
+        let mut seq = 0;
+        let mut h = StillHold::default();
+        assert_eq!(run(&mut h, 600.0, 0.5, Some(13.0), &mut seq), 0.0);
+    }
+
+    #[test]
+    fn strong_sustained_breathing_creates_presence_without_motion() {
+        let mut seq = 0;
+        let mut h = StillHold::default();
+        // Someone already asleep when the server starts.
+        assert_eq!(run(&mut h, 9.0, 0.5, Some(100.0), &mut seq), 0.0);
+        assert!(run(&mut h, 30.0, 0.5, Some(100.0), &mut seq) > 0.9);
+    }
+
+    #[test]
+    fn nothing_latches_before_the_baseline_warms_up() {
+        let mut h = StillHold::default();
+        for i in 0..200u64 {
+            assert!(!h.update(3.0, false, None, i / 20, FPS));
+        }
+        assert!(!h.update(0.5, true, None, 11, FPS));
+    }
 }
 
 /// Per-node results of a motion calibration run.

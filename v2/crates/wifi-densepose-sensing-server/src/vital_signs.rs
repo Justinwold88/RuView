@@ -82,6 +82,23 @@ pub struct VitalSignDetector {
     heartbeat_capacity: usize,
     /// Running frame count for signal quality estimation.
     frame_count: u64,
+    /// Frames between spectral estimates: one second of CSI at the
+    /// configured sample rate. The windows are 15 and 30 s long, so running
+    /// the band-pass filters and FFTs on every frame (about 75% of per-frame
+    /// time at 20 Hz) recomputed almost the same spectrum each time.
+    estimate_interval_frames: u64,
+    /// Frames pushed since the last spectral estimate.
+    frames_since_estimate: u64,
+    /// Last spectral estimate: (breathing, breathing confidence, heart rate,
+    /// heartbeat confidence). `None` until the first frame is processed.
+    last_estimate: Option<(Option<f64>, f64, Option<f64>, f64)>,
+}
+
+/// Spectral estimates are refreshed once per this many seconds of CSI.
+const ESTIMATE_INTERVAL_SECS: f64 = 1.0;
+
+fn estimate_interval_frames(sample_rate: f64) -> u64 {
+    ((sample_rate * ESTIMATE_INTERVAL_SECS).round() as u64).max(1)
 }
 
 impl VitalSignDetector {
@@ -106,6 +123,9 @@ impl VitalSignDetector {
             breathing_capacity: breathing_capacity.max(1),
             heartbeat_capacity: heartbeat_capacity.max(1),
             frame_count: 0,
+            estimate_interval_frames: estimate_interval_frames(sample_rate),
+            frames_since_estimate: 0,
+            last_estimate: None,
         }
     }
 
@@ -117,6 +137,11 @@ impl VitalSignDetector {
     /// The detector extracts two aggregate features per frame:
     /// 1. Mean amplitude (breathing signal -- chest movement modulates path loss)
     /// 2. Phase variance across subcarriers (heartbeat signal -- subtle phase shifts)
+    ///
+    /// Both features are buffered on every frame. The breathing and heart-rate
+    /// spectra are recomputed once per second of CSI (see
+    /// [`ESTIMATE_INTERVAL_SECS`]); frames in between return the latest
+    /// estimate with a freshly computed signal quality.
     pub fn process_frame(&mut self, amplitude: &[f64], phase: &[f64]) -> VitalSigns {
         self.frame_count += 1;
 
@@ -169,9 +194,20 @@ impl VitalSignDetector {
             self.heartbeat_buffer.pop_front();
         }
 
-        // -- Extract vital signs --
-        let (breathing_rate, breathing_confidence) = self.extract_breathing();
-        let (heart_rate, heartbeat_confidence) = self.extract_heartbeat();
+        // -- Extract vital signs (once per estimate interval) --
+        self.frames_since_estimate += 1;
+        let (breathing_rate, breathing_confidence, heart_rate, heartbeat_confidence) =
+            match self.last_estimate {
+                Some(cached) if self.frames_since_estimate < self.estimate_interval_frames => cached,
+                _ => {
+                    let (br, br_conf) = self.extract_breathing();
+                    let (hr, hr_conf) = self.extract_heartbeat();
+                    let fresh = (br, br_conf, hr, hr_conf);
+                    self.last_estimate = Some(fresh);
+                    self.frames_since_estimate = 0;
+                    fresh
+                }
+            };
 
         // -- Signal quality --
         let signal_quality = self.compute_signal_quality(amplitude);
@@ -344,6 +380,8 @@ impl VitalSignDetector {
         self.breathing_buffer.clear();
         self.heartbeat_buffer.clear();
         self.frame_count = 0;
+        self.frames_since_estimate = 0;
+        self.last_estimate = None;
     }
 
     /// Retune temporal windows to an observed CSI clock. Changes smaller than
@@ -363,6 +401,7 @@ impl VitalSignDetector {
             ((sample_rate * self.breathing_window_secs) as usize).max(1);
         self.heartbeat_capacity =
             ((sample_rate * self.heartbeat_window_secs) as usize).max(1);
+        self.estimate_interval_frames = estimate_interval_frames(sample_rate);
         self.reset();
         true
     }
@@ -847,6 +886,37 @@ mod tests {
                 "breathing rate {rate:.1} BPM should be near {target_bpm} BPM (error={error:.1})"
             );
         }
+    }
+
+    #[test]
+    fn spectra_refresh_once_per_second_and_match_a_fresh_estimate() {
+        let sr = 20.0;
+        let mut detector = VitalSignDetector::new(sr);
+        let phase: Vec<f64> = (0..56).map(|i| (i as f64 * 0.2).sin()).collect();
+        let amp_at = |frame: usize| -> Vec<f64> {
+            let t = frame as f64 / sr;
+            (0..56)
+                .map(|i| 15.0 + 5.0 * (i as f64 * 0.1).sin() + 3.0 * (2.0 * PI * 0.25 * t).sin())
+                .collect()
+        };
+        let mut last = VitalSigns::default();
+        for frame in 0..(sr as usize * 40) {
+            last = detector.process_frame(&amp_at(frame), &phase);
+            // Frames inside an interval reuse the cached spectrum.
+            assert!(detector.frames_since_estimate < detector.estimate_interval_frames);
+        }
+        assert_eq!(detector.estimate_interval_frames, 20);
+        // Whatever frame we stopped on, the published estimate is at most
+        // one second old and equals what the buffers held at that time.
+        let (br_now, _) = detector.extract_breathing();
+        let br_cached = last.breathing_rate_bpm.expect("breathing after 40 s");
+        let br_now = br_now.expect("breathing from the current buffer");
+        assert!((br_cached - br_now).abs() < 0.5, "cached {br_cached} vs fresh {br_now}");
+        assert!((br_cached - 15.0).abs() < 1.5);
+        // A sample-rate change resets the cache and the interval.
+        assert!(detector.reconfigure_sample_rate(50.0));
+        assert_eq!(detector.estimate_interval_frames, 50);
+        assert!(detector.last_estimate.is_none());
     }
 
     #[test]

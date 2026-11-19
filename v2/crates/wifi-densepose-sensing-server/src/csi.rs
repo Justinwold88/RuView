@@ -633,14 +633,12 @@ pub fn extract_features_from_frame(
             .clamp(0.0, 1.0)
     };
 
+    // Only change over time counts as motion. `motion_band_power` and
+    // `change_points` describe one frame across subcarriers, which is the
+    // room's static multipath shape, so they stay high in an empty room.
+    // Kept in step with the server's copy in main.rs (plan item 0.2).
     let variance_motion = (temporal_variance / 10.0).clamp(0.0, 1.0);
-    let mbp_motion = (motion_band_power / 25.0).clamp(0.0, 1.0);
-    let cp_motion = (change_points as f64 / 15.0).clamp(0.0, 1.0);
-    let motion_score = (temporal_motion_score * 0.4
-        + variance_motion * 0.2
-        + mbp_motion * 0.25
-        + cp_motion * 0.15)
-        .clamp(0.0, 1.0);
+    let motion_score = (temporal_motion_score * 0.4 + variance_motion * 0.2).clamp(0.0, 1.0);
 
     let snr_db = (frame.rssi as f64 - frame.noise_floor as f64).max(0.0);
     let snr_quality = (snr_db / 40.0).clamp(0.0, 1.0);
@@ -1252,5 +1250,40 @@ mod adr110_tests {
 
         // Steady-state HE frames keep flowing.
         assert!(ns.accept_grid(he.grid()));
+    }
+}
+
+#[cfg(test)]
+mod static_room_motion_tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    /// A room with strong frequency-selective fading but no motion: every
+    /// frame is identical, so nothing changes over time. Before plan item
+    /// 0.2 the across-subcarrier terms scored this shape as motion
+    /// (about 0.25 from `motion_band_power` alone) and held presence on.
+    #[test]
+    fn static_room_shape_is_not_motion() {
+        let amplitudes: Vec<f64> = (0..52).map(|k| 20.0 + 15.0 * (k as f64 * 0.7).sin()).collect();
+        let frame = Esp32Frame {
+            magic: 0xC511_0001,
+            node_id: 1,
+            n_antennas: 1,
+            n_subcarriers: amplitudes.len() as u16,
+            freq_mhz: 2437,
+            sequence: 0,
+            rssi: -50,
+            noise_floor: -90,
+            ppdu_type: wifi_densepose_hardware::PpduType::HtLegacy,
+            amplitudes: amplitudes.clone(),
+            phases: vec![0.0; amplitudes.len()],
+        };
+        let history: VecDeque<Vec<f64>> = std::iter::repeat(amplitudes).take(20).collect();
+        let (features, classification, _, _, motion_score) =
+            extract_features_from_frame(&frame, &history, 20.0);
+        assert!(features.motion_band_power > 25.0, "the fixture must have a strong room shape");
+        assert!(features.change_points > 0);
+        assert!(motion_score < 1e-6, "static room scored {motion_score} as motion");
+        assert!(!classification.presence);
     }
 }

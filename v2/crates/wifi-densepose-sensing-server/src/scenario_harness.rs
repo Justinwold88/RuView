@@ -837,9 +837,9 @@ fn score(runs: &[(Scenario, Vec<FrameOut>)]) -> Metrics {
     m
 }
 
-/// G1 numbers for one seed set's runs, scored the same way as [`score`].
-fn gate_summary(runs: &[(Scenario, Vec<FrameOut>)]) -> GateSummary {
-    let m = score(runs);
+/// G1 numbers for one seed set: `m` is [`score`] of the same `runs`, which
+/// are needed only for the walk-in latencies.
+fn gate_summary(m: &Metrics, runs: &[(Scenario, Vec<FrameOut>)]) -> GateSummary {
     let entries: Vec<Option<f64>> = runs
         .iter()
         .filter(|(sc, _)| sc.family == Family::EnterStill)
@@ -1373,12 +1373,12 @@ fn scenario_harness() {
     };
     let runs = run_set(0, &mut timing);
     let mut metrics = score(&runs);
-    metrics.seed_sets.insert("0".into(), gate_summary(&runs));
+    let set0 = gate_summary(&metrics, &runs);
+    metrics.seed_sets.insert("0".into(), set0);
     for set in 1..SEED_SETS {
         let other = run_set(set, &mut timing);
-        metrics
-            .seed_sets
-            .insert(set.to_string(), gate_summary(&other));
+        let summary = gate_summary(&score(&other), &other);
+        metrics.seed_sets.insert(set.to_string(), summary);
     }
     metrics.calibration = calibration_runs();
     let report = report_markdown(&metrics, &timing);

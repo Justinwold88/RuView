@@ -783,6 +783,21 @@ For the portable RuView MetaHarness, use `npx @ruvnet/ruview@0.9.1`. The quick c
 
 ---
 
+## 🧱 Tech Stack
+
+| Layer | Technologies |
+|---|---|
+| **Core runtime** | Rust (toolchain pinned in [`v2/rust-toolchain.toml`](v2/rust-toolchain.toml)), Tokio, Axum + Tower (HTTP/WebSocket sensing server) |
+| **Signal processing & ML** | `ndarray`, RustFFT; neural backends via Candle, ONNX Runtime (`ort`), or LibTorch (`tch`) as optional features |
+| **Edge firmware** | C on ESP-IDF for ESP32-S3 and ESP32-C6 ([`firmware/esp32-csi-node/`](firmware/esp32-csi-node/README.md)) |
+| **Python** | PyO3 + maturin wheel ([`wifi-densepose`](https://pypi.org/project/wifi-densepose/) on PyPI, Python 3.10+); frozen FastAPI/PyTorch reference pipeline in [`archive/v1/`](archive/v1/) |
+| **Web, mobile & desktop** | Browser UI ([`ui/`](ui/)), Lit + Preact Signals PWA ([`dashboard/`](dashboard/)), React Native / Expo ([`ui/mobile/`](ui/mobile/)), Tauri 2 desktop app |
+| **WASM & Node** | `wasm-bindgen`, Wasmtime (signed Homecore plugins), napi-rs, Node.js 20+ CLI and MCP harness ([`@ruvnet/ruview`](harness/ruview/README.md)) |
+| **Smart home** | MQTT with Home Assistant discovery, Matter, Apple HomeKit (HAP) |
+| **Delivery** | Docker, GitHub Actions, PyPI, npm, Hugging Face (model weights) |
+
+---
+
 ## 📖 Documentation
 
 [![RuView visual guide: header-docs](assets/readme/header-docs-spatial-v4.svg)](docs/user-guide.md)
@@ -806,7 +821,7 @@ Start with the user, build, and calibration guides; expand for the full referenc
 | [Portable harness — `npx @ruvnet/ruview`](harness/ruview/README.md) | MetaHarness-minted, host-portable RuView operator harness — `ruview.*` MCP tools + the MEASURED-vs-CLAIMED honesty guardrail enforced in code ([ADR-182](docs/adr/ADR-182-npx-ruview-harness-via-metaharness.md)). A lighter, multi-host companion to the in-repo plugin. |
 | [CSI Frame Selection — Measured](docs/csi-frame-selection-measured.md) | Which rate gate actually buys cross-node pairing, measured on a nine-node ESP32-C6 fleet as a 2x2 factorial in three Latin-square blocks. Selecting frames by 802.11 `rx_seq` roughly doubled pairing (+31.7 pp) while mesh-time alignment bought +0.5 pp, inside noise. Includes the trade it makes, a prediction that turned out wrong, the limits of the measurement, and `run_arms.py` so the comparison can be re-run rather than taken on trust. |
 | [ESP32-C6 Firmware Runbook](firmware/esp32-csi-node/RUNBOOK.md) | What to run, in what order, and what to check: the three-file build that keeps OTA rollback compiled in, a five-key pre-flash gate, which flash regions OTA can and cannot reach, a single-board diagnostic flash with a revert path, and the tunables whose right value depends on your house rather than on the chip. |
-| [Architecture Decisions](docs/adr/README.md) | 205 ADRs — why each technical choice was made, organized by domain (hardware, signal processing, ML, platform, infrastructure) |
+| [Architecture Decisions](docs/adr/README.md) | Why each technical choice was made, organized by domain (hardware, signal processing, ML, platform, infrastructure) |
 | [Domain Models](docs/ddd/README.md) | 8 DDD models (RuvSense, Signal Processing, Training Pipeline, Hardware Platform, Sensing Server, WiFi-Mat, CHCI, rvCSI) — bounded contexts, aggregates, domain events, and ubiquitous language |
 | [rvCSI — edge RF sensing runtime](https://github.com/ruvnet/rvcsi) | Rust-first / TypeScript-accessible / hardware-abstracted CSI runtime: multi-source ingestion (incl. real nexmon_csi `.pcap` from a **Raspberry Pi 5** / Pi 4 / Pi 3B+ — CYW43455 / BCM43455c0) → validation → DSP → typed events → RuVector RF memory ([ADR-095](docs/adr/ADR-095-rvcsi-edge-rf-sensing-platform.md), [ADR-096](docs/adr/ADR-096-rvcsi-ffi-crate-layout.md), [domain model](docs/ddd/rvcsi-domain-model.md)). Now its own repo — [`ruvnet/rvcsi`](https://github.com/ruvnet/rvcsi) — vendored here under `vendor/rvcsi`; 9 `rvcsi-*` crates on crates.io, `@ruv/rvcsi` on npm, plus a Claude Code plugin. |
 | [Desktop App](v2/crates/wifi-densepose-desktop/README.md) | **WIP** — Tauri v2 desktop app for node management, OTA updates, WASM deployment, and mesh visualization |

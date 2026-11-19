@@ -900,12 +900,19 @@ mod tests {
                 .collect()
         };
         let mut last = VitalSigns::default();
-        for frame in 0..(sr as usize * 40) {
+        let n_frames = sr as usize * 40;
+        let mut recomputes = 0;
+        for frame in 0..n_frames {
             last = detector.process_frame(&amp_at(frame), &phase);
-            // Frames inside an interval reuse the cached spectrum.
-            assert!(detector.frames_since_estimate < detector.estimate_interval_frames);
+            // The counter is reset to 0 only on frames that recompute.
+            if detector.frames_since_estimate == 0 {
+                recomputes += 1;
+            }
         }
         assert_eq!(detector.estimate_interval_frames, 20);
+        // Frame 0 (no cached estimate yet), then every 20th frame: 40 spectra
+        // in 800 frames. Recomputing on every frame would count 800.
+        assert_eq!(recomputes, n_frames / 20);
         // Whatever frame we stopped on, the published estimate is at most
         // one second old and equals what the buffers held at that time.
         let (br_now, _) = detector.extract_breathing();

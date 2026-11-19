@@ -34,7 +34,7 @@ All code paths shown are relative to `v2/crates/wifi-densepose-` unless otherwis
 | **Frame History** | A circular buffer of the last 100 CSI amplitude vectors used for temporal analysis (sliding-window variance, Goertzel breathing estimation) |
 | **Goertzel Filter** | A frequency-domain estimator applied to the frame history to detect breathing rate (0.1--0.5 Hz) via a 9-candidate filter bank |
 | **Signal Field** | A 20x1x20 grid of interpolated signal intensity values rendered as Gaussian splats in the UI |
-| **Pose Source** | Whether pose keypoints are `signal_derived` (analytical from CSI features) or `model_inference` (from a loaded RVF model) |
+| **Pose Source** | Whether pose keypoints are `illustrative` (a template skeleton placed from the motion level, not measured; named `signal_derived` before the rename, still available with `--legacy-pose-source-name` for one release) or `model_inference` (from a loaded RVF model) |
 | **Progressive Loader** | A two-layer model loading strategy: Layer A loads instantly for basic inference, Layer B loads in background for full accuracy |
 | **Sensing-Only Mode** | UI mode when the DensePose backend is unavailable; suppresses DensePose tabs, shows only sensing and signal visualization |
 | **AppStateInner** | The single shared state struct holding all server state, accessed via `Arc<RwLock<AppStateInner>>` |

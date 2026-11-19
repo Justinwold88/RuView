@@ -80,6 +80,9 @@ fn make_cfg(port: u16, privacy_mode: bool, label: &str) -> std::sync::Arc<MqttCo
             pose_hz: 5.0,
         },
         publish_pose: false,
+        // These tests check the heart-rate wiring end to end, so they opt in
+        // (it is off by default).
+        publish_heart_rate: true,
         privacy_mode,
     })
 }

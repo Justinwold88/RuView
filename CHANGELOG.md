@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Unvalidated outputs are hidden or labelled.** Home Assistant no longer
+  gets a heart-rate sensor or the `possible_distress` state (derived from
+  heart rate) unless the server runs with `--mqtt-publish-heart-rate`
+  (`RUVIEW_MQTT_PUBLISH_HEART_RATE=1`). Heart rate from single-antenna ESP32
+  CSI has not been validated, and the SYNTHETIC scenario harness shows
+  errors at chance level. When no trained model is loaded, the pose
+  WebSocket now reports `pose_source: "illustrative"` instead of
+  `"signal_derived"`, and the live demo labels the skeleton as a template
+  rather than a measurement. `--legacy-pose-source-name`
+  (`RUVIEW_LEGACY_POSE_SOURCE_NAME=1`) restores the old value for one release.
+  **Breaking for Home Assistant users** who rely on `heart_rate` or
+  `possible_distress`: add the flag to keep them.
+
 - **ruv-FANN proof tooling and a default-off server shadow (ADR-426).**
   `ruview-fann-repro` checks whether a fit is reproducible across machines;
   `ruview-fann-fit` exports a head from Train rows; `ruview-fann-replay

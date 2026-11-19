@@ -97,6 +97,13 @@ pub struct MqttArgs {
     #[arg(long)]
     pub mqtt_publish_pose: bool,
 
+    /// Announce the heart-rate sensor and the possible-distress state (which
+    /// is derived from heart rate) to Home Assistant. Off by default: heart
+    /// rate from single-antenna CSI has not been validated, and the SYNTHETIC
+    /// scenario harness shows errors at chance level.
+    #[arg(long, env = "RUVIEW_MQTT_PUBLISH_HEART_RATE", value_parser = parse_env_bool)]
+    pub mqtt_publish_heart_rate: bool,
+
     /// Pose publish rate (Hz) when --mqtt-publish-pose is set
     #[arg(long, default_value = "1.0")]
     pub mqtt_rate_pose: f64,
@@ -276,6 +283,13 @@ pub struct Args {
     #[arg(long)]
     pub mqtt_publish_pose: bool,
 
+    /// Announce the heart-rate sensor and the possible-distress state (which
+    /// is derived from heart rate) to Home Assistant. Off by default: heart
+    /// rate from single-antenna CSI has not been validated, and the SYNTHETIC
+    /// scenario harness shows errors at chance level.
+    #[arg(long, env = "RUVIEW_MQTT_PUBLISH_HEART_RATE", value_parser = parse_env_bool)]
+    pub mqtt_publish_heart_rate: bool,
+
     /// Pose publish rate (Hz) when --mqtt-publish-pose is set
     #[arg(long, default_value = "1.0")]
     pub mqtt_rate_pose: f64,
@@ -351,6 +365,7 @@ mod tests {
         assert_eq!(args.mqtt_rate_count, 1.0);
         assert_eq!(args.mqtt_rate_rssi, 0.1);
         assert!(!args.mqtt_publish_pose);
+        assert!(!args.mqtt_publish_heart_rate, "heart rate must be opt-in");
         assert_eq!(args.mqtt_rate_pose, 1.0);
         assert!(!args.mqtt_tls);
         assert!(args.mqtt_username.is_none());

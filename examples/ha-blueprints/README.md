@@ -46,7 +46,7 @@ audit before deploying in regulated contexts.
 
 | Blueprint                                | Privacy-mode safe? |
 |------------------------------------------|--------------------|
-| 01 Notify on possible distress           | ⚠️ derives from HR/motion — state still publishes |
+| 01 Notify on possible distress           | ⚠️ derives from HR/motion — needs `--mqtt-publish-heart-rate`; state still publishes |
 | 02 Dim hallway when sleeping             | ⚠️ derives from BR — state still publishes |
 | 03 Wake routine on bed exit              | ✅                  |
 | 04 Alert on elderly inactivity anomaly   | ✅                  |

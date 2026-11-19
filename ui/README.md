@@ -58,7 +58,7 @@ ui/
 
 ### Live Demo Tab
 - WebSocket-based real-time pose skeleton rendering
-- **Estimation Mode badge**: green "Signal-Derived" or blue "Model Inference"
+- **Estimation Mode badge**: green "Illustrative" (template skeleton, not measured) or blue "Model Inference"
 - **Setup Guide panel** showing what each ESP32 count provides:
   - 1 ESP32: presence, breathing, gross motion
   - 2-3 ESP32s: body localization, motion direction
@@ -152,7 +152,7 @@ Open http://localhost:3000
 
 | Mode | Badge | Requirements | Accuracy |
 |------|-------|-------------|----------|
-| **Signal-Derived** | Green | 1+ ESP32, no model needed | Presence, breathing, gross motion |
+| **Illustrative** | Green | 1+ ESP32, no model needed | The skeleton is a template placed from the motion level, not measured. Presence, breathing and gross motion come from the sensing pipeline |
 | **Model Inference** | Blue | 4+ ESP32s + trained `.rvf` model | Full 17-keypoint COCO pose |
 
 To use model inference, start the server with a trained model:

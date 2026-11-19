@@ -92,7 +92,12 @@ impl PublishPlanner {
 
     pub fn with_semantic_config(cfg: &MqttConfig, semantic: PrimitiveConfig) -> Self {
         Self {
-            entities: DiscoveryBuilder::enabled_entities(cfg.privacy_mode, cfg.publish_pose, &[]),
+            entities: DiscoveryBuilder::enabled_entities(
+                cfg.privacy_mode,
+                cfg.publish_pose,
+                cfg.publish_heart_rate,
+                &[],
+            ),
             rates: cfg.rates,
             privacy_mode: cfg.privacy_mode,
             semantic,

@@ -221,6 +221,13 @@ struct Args {
     #[arg(long, env = "RUVIEW_PRIVACY_MODE", value_parser = cli::parse_env_bool)]
     privacy_mode: bool,
 
+    /// Report `pose_source: "signal_derived"` instead of `"illustrative"` on
+    /// the pose WebSocket when no trained model is loaded. Compatibility for
+    /// clients that match the old value; it will be removed in the next
+    /// release.
+    #[arg(long, env = "RUVIEW_LEGACY_POSE_SOURCE_NAME", value_parser = cli::parse_env_bool)]
+    legacy_pose_source_name: bool,
+
     /// MQTT publisher (HA auto-discovery) flags (ADR-115).
     /// Flattened so `--mqtt*` reach the binary's parser and the publisher
     /// in `mqtt::` is actually started (fixes #872). Uses the *lib* crate's
@@ -2154,6 +2161,9 @@ struct AppStateInner {
     /// `--privacy-mode` (#2094): WebSocket frames and recordings drop
     /// biometric fields; REST is filtered by middleware.
     privacy_mode: bool,
+    /// `--legacy-pose-source-name`: report the pre-rename `signal_derived`
+    /// pose source for one release.
+    legacy_pose_source_name: bool,
     // ── Training fields (ADR-186 TRAIN-RECONNECT) ────────────────────────────
     /// Live training state (shared status snapshot + cooperative cancel flag +
     /// background task handle) for the in-server trainer in `training_api`.
@@ -3230,6 +3240,7 @@ impl AppStateInner {
             recording_current_id: None,
             recording_stop_tx: None,
             privacy_mode: false,
+            legacy_pose_source_name: false,
             training_state: training_api::TrainingState::default(),
             training_progress_tx: broadcast::channel::<String>(256).0,
             adaptive_model: None,
@@ -6231,10 +6242,36 @@ async fn ws_pose_handler(
     ws.on_upgrade(|socket| handle_ws_pose_client(socket, state))
 }
 
+/// `pose_source` for keypoints that do not come from a trained model. They are
+/// a template skeleton placed from the motion level, so the name says they
+/// illustrate, not measure. `legacy` keeps the old name for one release.
+fn illustrative_pose_source(legacy: bool) -> &'static str {
+    if legacy {
+        "signal_derived"
+    } else {
+        "illustrative"
+    }
+}
+
+#[cfg(test)]
+mod illustrative_pose_source_tests {
+    use super::*;
+
+    #[test]
+    fn template_pose_is_labelled_illustrative_with_a_legacy_alias() {
+        assert_eq!(illustrative_pose_source(false), "illustrative");
+        assert_eq!(illustrative_pose_source(true), "signal_derived");
+        assert!(!Args::parse_from(["sensing-server"]).legacy_pose_source_name);
+        assert!(
+            Args::parse_from(["sensing-server", "--legacy-pose-source-name"]).legacy_pose_source_name
+        );
+    }
+}
+
 async fn handle_ws_pose_client(mut socket: WebSocket, state: SharedState) {
-    let (mut rx, privacy_mode, _client) = {
+    let (mut rx, privacy_mode, legacy_pose_source_name, _client) = {
         let s = state.read().await;
-        (s.tx.subscribe(), s.privacy_mode, s.ws_clients.enter())
+        (s.tx.subscribe(), s.privacy_mode, s.legacy_pose_source_name, s.ws_clients.enter())
     };
 
     info!("WebSocket client connected (pose)");
@@ -6255,8 +6292,10 @@ async fn handle_ws_pose_client(mut socket: WebSocket, state: SharedState) {
                         if let Ok(sensing) = serde_json::from_str::<SensingUpdate>(&json) {
                             if sensing.msg_type == "sensing_update" {
                                 // Determine pose estimation mode for the UI indicator.
-                                // "model_inference"    — a trained RVF model is loaded.
-                                // "signal_derived"     — keypoints estimated from raw CSI features.
+                                // "model_inference" — a trained RVF model is loaded.
+                                // "illustrative"    — no model: a template skeleton placed
+                                //                     from the motion level, not a measurement
+                                //                     (renamed from "signal_derived").
                                 let (model_loaded, physics_assessment) = {
                                     let s = state.read().await;
                                     // The physics assessment describes the skeleton,
@@ -6276,7 +6315,7 @@ async fn handle_ws_pose_client(mut socket: WebSocket, state: SharedState) {
                                 let pose_source = if model_loaded {
                                     "model_inference"
                                 } else {
-                                    "signal_derived"
+                                    illustrative_pose_source(legacy_pose_source_name)
                                 };
 
                                 let persons = if model_loaded {
@@ -15082,6 +15121,7 @@ async fn main() {
         recording_current_id: None,
         recording_stop_tx: None,
         privacy_mode: args.privacy_mode,
+        legacy_pose_source_name: args.legacy_pose_source_name,
         // Training (ADR-186 TRAIN-RECONNECT)
         training_state: training_api::TrainingState::default(),
         training_progress_tx: broadcast::channel::<String>(256).0,

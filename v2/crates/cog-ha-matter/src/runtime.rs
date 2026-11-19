@@ -92,6 +92,9 @@ pub fn build_publisher_inputs(
         refresh_secs: 60,
         rates: PublishRates::default(),
         publish_pose: false,
+        // Heart rate is not validated; the cog follows the server default
+        // and does not announce it.
+        publish_heart_rate: false,
         privacy_mode,
     };
 

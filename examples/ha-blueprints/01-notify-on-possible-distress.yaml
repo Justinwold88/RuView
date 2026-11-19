@@ -6,6 +6,9 @@ blueprint:
     fall (possible_distress primitive). Includes the explainability
     reason payload so the recipient knows why the alert fired.
     Part of the ADR-115 §3.12 starter blueprint set.
+    Requires the server to run with --mqtt-publish-heart-rate: possible
+    distress is derived from heart rate, which RuView has not validated,
+    so the entity is not announced by default.
   domain: automation
   source_url: https://github.com/ruvnet/RuView/blob/main/examples/ha-blueprints/01-notify-on-possible-distress.yaml
   input:

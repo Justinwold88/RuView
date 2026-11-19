@@ -36,7 +36,7 @@ cargo run --release -p wifi-densepose-sensing-server \
 Within ~5 seconds of the first CSI frame, Home Assistant should auto-create:
 
 - One **device** per RuView node, named `RuView node <client-id>-node<N>` (see [Device identity](#device-identity))
-- **15 entities** per device (13 with `--privacy-mode`): the raw signals and six semantic primitives listed in the [Entity reference](#entity-reference)
+- **13 entities** per device by default, 15 with `--mqtt-publish-heart-rate` (12 with `--privacy-mode`): the raw signals and six semantic primitives listed in the [Entity reference](#entity-reference)
 
 If nothing appears in HA's Settings → Devices, see [Troubleshooting](#troubleshooting).
 
@@ -60,11 +60,13 @@ Names below are the `unique_id` slugs; Home Assistant assigns friendly names aut
 | Presence score | `presence_score` | `sensor` | % | node classification confidence × 100 while present, else 0 | always |
 | Motion energy | `motion_energy` | `sensor` | (dimensionless) | `node_features[].features.motion_band_power`, else the room `features.motion_band_power` | a band-power value was seen in the last 30 s |
 | Signal strength | `rssi` | `sensor` | dBm | `nodes[].rssi_dbm` | an RSSI was seen in the last 30 s |
-| Heart rate | `heart_rate` | `sensor` | bpm | `vital_signs.heart_rate_bpm` (room-level) | a published estimate in the last 30 s |
+| Heart rate | `heart_rate` | `sensor` | bpm | `vital_signs.heart_rate_bpm` (room-level) | only with `--mqtt-publish-heart-rate`; then a published estimate in the last 30 s |
 | Breathing rate | `breathing_rate` | `sensor` | bpm | `vital_signs.breathing_rate_bpm` (room-level) | a published estimate in the last 30 s |
 | Fall detected | `fall` | `event` | — | rising edge of the node's `edge_vitals.fall_detected` | the node sent `edge_vitals` in the last 30 s |
 
 The server publishes heart and breathing rate only after explicit calibration, with exactly one occupant and a passing quality gate. Until then both entities stay unavailable. Heart rate and breathing rate are **biometric**: `--privacy-mode` removes them from discovery and state (see [Privacy](#privacy)).
+
+Heart rate is **not announced by default**. Heart rate from single-antenna ESP32 CSI has not been validated, and the server's SYNTHETIC scenario harness shows errors at chance level. Pass `--mqtt-publish-heart-rate` (or set `RUVIEW_MQTT_PUBLISH_HEART_RATE=1`) to announce it, along with `possible_distress`, which is derived from it. Do not use either for health or safety decisions.
 
 ### Semantic automation primitives (6 entities)
 
@@ -76,7 +78,7 @@ Small finite-state machines run inside the server, one set per node, sampled onc
 | No movement (safety) | `no_movement` | `binary_sensor` | presence + motion <1% for 30 min | after warmup |
 | Elderly inactivity anomaly | `elderly_inactivity_anomaly` | `binary_sensor` | stillness > 2× the longest stillness seen since start (floor 30 min) | after warmup |
 | Someone sleeping | `someone_sleeping` | `binary_sensor` | presence + motion <5% + BR ∈ [8,20] bpm for 5 min | after warmup, while breathing rate is available |
-| Possible distress | `possible_distress` | `binary_sensor` | HR ≥ 1.5× resting baseline + motion >20% + no fall, for 60 s | after warmup, while heart rate is available |
+| Possible distress | `possible_distress` | `binary_sensor` | HR ≥ 1.5× resting baseline + motion >20% + no fall, for 60 s | only with `--mqtt-publish-heart-rate`; then after warmup, while heart rate is available |
 | Fall risk elevated | `fall_risk_elevated` | `sensor` | 0–100 score: 10 per fall in 24 h + 50 × motion variance over 60 s | after warmup, while the fall detector is available |
 
 Per-node motion is a three-level classification, so the motion thresholds above effectively mean "moving" or "not moving". The precision and recall figures in [`semantic-primitives-metrics.md`](./semantic-primitives-metrics.md) are CLAIMED: the replay tooling they cite is not in the repository. No `reason` attribute is published yet; the explanation tags stay server-side.
@@ -150,6 +152,7 @@ Per ADR-115 §3.11.1, the Matter Bridge exposes a subset on standard clusters so
 | `--mqtt-rate-count <HZ>` | 1.0 | Person-count publish rate (Hz) |
 | `--mqtt-rate-rssi <HZ>` | 0.1 | RSSI publish rate (Hz) |
 | `--mqtt-publish-pose` | off | Accepted; no pose source exists, so it only logs a warning |
+| `--mqtt-publish-heart-rate` | off (`RUVIEW_MQTT_PUBLISH_HEART_RATE`) | Announce `heart_rate` and `possible_distress`. Heart rate is not validated |
 | `--mqtt-rate-pose <HZ>` | 1.0 | Unused while no pose entity is announced |
 | `--privacy-mode` | off | Strip HR/BR/pose from MQTT, Matter, REST, WebSocket and recordings |
 | `--data-dir <DIR>` | `data` | Holds `mqtt_client_id` (and other server state) |

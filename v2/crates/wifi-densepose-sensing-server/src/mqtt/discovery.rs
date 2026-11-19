@@ -214,6 +214,14 @@ impl EntityKind {
         )
     }
 
+    /// True for entities that are announced only with
+    /// `--mqtt-publish-heart-rate`: heart rate itself, and possible distress,
+    /// which fires on sustained heart rate above baseline. Heart rate from
+    /// single-antenna CSI is not validated, so neither is shown by default.
+    pub fn needs_heart_rate_opt_in(self) -> bool {
+        matches!(self, EntityKind::HeartRate | EntityKind::PossibleDistress)
+    }
+
     /// False for entities the sensing broadcast has no source for. They are
     /// not announced, so Home Assistant never shows an entity that can only
     /// stay "unknown" (issue #2085):
@@ -459,10 +467,15 @@ impl<'a> DiscoveryBuilder<'a> {
         cfg
     }
 
-    /// All entity kinds this builder will publish, given a `privacy_mode`
-    /// flag and a `publish_pose` flag. Used by the publisher to drive the
-    /// discovery-emission loop.
-    pub fn enabled_entities(privacy_mode: bool, publish_pose: bool, semantic_disabled: &[String]) -> Vec<EntityKind> {
+    /// All entity kinds this builder will publish, given the `privacy_mode`,
+    /// `publish_pose` and `publish_heart_rate` flags. Used by the publisher
+    /// to drive the discovery-emission loop.
+    pub fn enabled_entities(
+        privacy_mode: bool,
+        publish_pose: bool,
+        publish_heart_rate: bool,
+        semantic_disabled: &[String],
+    ) -> Vec<EntityKind> {
         let all = [
             EntityKind::Presence,
             EntityKind::PersonCount,
@@ -496,6 +509,9 @@ impl<'a> DiscoveryBuilder<'a> {
                     return false;
                 }
                 if *e == EntityKind::PoseKeypoints && !publish_pose {
+                    return false;
+                }
+                if e.needs_heart_rate_opt_in() && !publish_heart_rate {
                     return false;
                 }
                 if let Some(slug) = semantic_slug_for(*e) {
@@ -598,7 +614,7 @@ mod tests {
 
     #[test]
     fn enabled_entities_default_includes_every_sourced_entity() {
-        let entities = DiscoveryBuilder::enabled_entities(false, false, &[]);
+        let entities = DiscoveryBuilder::enabled_entities(false, false, true, &[]);
         assert!(!entities.contains(&EntityKind::PoseKeypoints));
         assert!(entities.contains(&EntityKind::Presence));
         assert!(entities.contains(&EntityKind::HeartRate));
@@ -607,9 +623,27 @@ mod tests {
     }
 
     #[test]
+    fn heart_rate_and_possible_distress_are_opt_in() {
+        let default = DiscoveryBuilder::enabled_entities(false, false, false, &[]);
+        assert!(!default.contains(&EntityKind::HeartRate));
+        assert!(!default.contains(&EntityKind::PossibleDistress));
+        assert!(default.contains(&EntityKind::BreathingRate));
+        assert!(default.contains(&EntityKind::SomeoneSleeping));
+        assert_eq!(default.len(), 13);
+
+        let opted_in = DiscoveryBuilder::enabled_entities(false, false, true, &[]);
+        assert!(opted_in.contains(&EntityKind::HeartRate));
+        assert!(opted_in.contains(&EntityKind::PossibleDistress));
+
+        // Privacy mode still wins over the opt-in for the raw value.
+        let private = DiscoveryBuilder::enabled_entities(true, false, true, &[]);
+        assert!(!private.contains(&EntityKind::HeartRate));
+    }
+
+    #[test]
     fn unsourced_entities_are_never_announced() {
         // #2085: announcing these left them "unknown" in HA forever.
-        let entities = DiscoveryBuilder::enabled_entities(false, true, &[]);
+        let entities = DiscoveryBuilder::enabled_entities(false, true, true, &[]);
         for e in [
             EntityKind::ZoneOccupancy,
             EntityKind::BathroomOccupied,
@@ -625,7 +659,7 @@ mod tests {
 
     #[test]
     fn privacy_mode_strips_biometrics() {
-        let entities = DiscoveryBuilder::enabled_entities(true, true, &[]);
+        let entities = DiscoveryBuilder::enabled_entities(true, true, true, &[]);
         for e in &entities {
             assert!(!e.is_biometric(), "biometric {:?} leaked with privacy_mode", e);
         }
@@ -637,7 +671,7 @@ mod tests {
     #[test]
     fn no_semantic_disables_specific_primitive() {
         let disabled = vec!["distress".to_string(), "sleeping".to_string()];
-        let entities = DiscoveryBuilder::enabled_entities(false, false, &disabled);
+        let entities = DiscoveryBuilder::enabled_entities(false, false, true, &disabled);
         assert!(!entities.contains(&EntityKind::PossibleDistress));
         assert!(!entities.contains(&EntityKind::SomeoneSleeping));
         // Raw signals untouched.

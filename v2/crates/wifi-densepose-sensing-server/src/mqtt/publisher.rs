@@ -222,6 +222,13 @@ async fn run(
              keypoints, so no pose entity is announced (issue #2085)"
         );
     }
+    if cfg.publish_heart_rate && !cfg.privacy_mode {
+        otel_warn!(
+            "[mqtt] --mqtt-publish-heart-rate: announcing heart rate and possible distress. \
+             Heart rate from single-antenna CSI is not validated; do not use it for health \
+             or safety decisions"
+        );
+    }
 
     // #898: one Home-Assistant device per node. Discovery is published lazily
     // the first time a snapshot for a given node_id arrives. The Instant is

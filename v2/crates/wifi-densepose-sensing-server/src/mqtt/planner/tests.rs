@@ -17,7 +17,27 @@ fn cfg(privacy_mode: bool) -> MqttConfig {
     };
     let mut c = MqttConfig::from_args(&args);
     c.privacy_mode = privacy_mode;
+    // These tests cover the heart-rate paths too, so they opt in. The
+    // default (off) is covered by `heart_rate_is_not_announced_by_default`.
+    c.publish_heart_rate = true;
     c
+}
+
+#[test]
+fn heart_rate_is_not_announced_by_default() {
+    let mut c = cfg(false);
+    c.publish_heart_rate = false;
+    let mut p = PublishPlanner::new(&c);
+    let slugs: Vec<_> = p.entities().iter().map(|e| e.topic_slug()).collect();
+    assert!(!slugs.contains(&"heart_rate"));
+    assert!(!slugs.contains(&"possible_distress"));
+    let b = builder();
+    for s in 0..=WARM.as_secs() {
+        for m in p.on_snapshot(&b, &full(true), Duration::from_secs(s)) {
+            assert!(!m.topic.contains("/heart_rate/"), "heart rate leaked: {}", m.topic);
+            assert!(!m.topic.contains("/possible_distress/"), "distress leaked: {}", m.topic);
+        }
+    }
 }
 
 fn builder() -> DiscoveryBuilder<'static> {

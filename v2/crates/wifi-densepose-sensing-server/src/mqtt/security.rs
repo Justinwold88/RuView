@@ -127,6 +127,7 @@ mod tests {
             refresh_secs: 600,
             rates: PublishRates::default(),
             publish_pose: false,
+            publish_heart_rate: false,
             privacy_mode: false,
         }
     }

@@ -20,7 +20,8 @@ export class LiveDemoTab {
       debugMode: false,
       autoReconnect: true,
       renderMode: 'skeleton',
-      // 'unknown' | 'signal_derived' | 'model_inference'
+      // 'unknown' | 'illustrative' | 'model_inference'
+      // ('signal_derived' is the pre-rename name for 'illustrative'.)
       poseSource: 'unknown'
     };
     
@@ -217,7 +218,7 @@ export class LiveDemoTab {
                 <div class="setting-row-ld">
                   <label class="ld-label">Model:</label>
                   <select class="ld-select" id="model-selector">
-                    <option value="">Signal-Derived (no model)</option>
+                    <option value="">Illustrative (no model)</option>
                   </select>
                 </div>
                 <div class="model-info-row" id="model-active-info" style="display: none;">
@@ -281,7 +282,8 @@ export class LiveDemoTab {
                   </div>
                 </div>
                 <p class="setup-note">
-                  Signal-Derived mode uses aggregate CSI features.
+                  Without a model the skeleton is illustrative: a template
+                  placed from the motion level, not measured limbs.
                   For per-limb tracking, load a trained <code>.rvf</code> model
                   with <code>--model path.rvf</code> and use 4+ sensors.
                 </p>
@@ -1423,12 +1425,12 @@ export class LiveDemoTab {
       description.textContent =
         'Pose is estimated by a trained neural network ' +
         'loaded from an RVF container.';
-    } else if (source === 'signal_derived') {
+    } else if (source === 'illustrative' || source === 'signal_derived') {
       badge.className = 'pose-source-badge pose-source-signal';
-      badge.textContent = 'Signal-Derived';
+      badge.textContent = 'Illustrative';
       description.textContent =
-        'Keypoints are derived from live CSI signal features ' +
-        '(motion power, breathing rate, variance).';
+        'Not a measurement: a template skeleton placed from the ' +
+        'motion level. Load a trained model for estimated keypoints.';
     } else {
       badge.className = 'pose-source-badge pose-source-unknown';
       badge.textContent = 'Unknown';
@@ -1525,8 +1527,8 @@ export class LiveDemoTab {
   populateModelSelector() {
     const selector = this.container.querySelector('#model-selector');
     if (!selector) return;
-    // Keep the first "Signal-Derived" option
-    selector.innerHTML = '<option value="">Signal-Derived (no model)</option>';
+    // Keep the first "Illustrative" option
+    selector.innerHTML = '<option value="">Illustrative (no model)</option>';
     this.modelState.models.forEach(model => {
       const opt = document.createElement('option');
       opt.value = model.id || model.model_id || model.name;
@@ -1598,7 +1600,7 @@ export class LiveDemoTab {
       this.updateModelUI();
       this.updateSplitViewAvailability();
       this.disableSplitView();
-      this.setState({ poseSource: 'signal_derived' });
+      this.setState({ poseSource: 'illustrative' });
     } catch (error) {
       this.setModelStatus(`Error: ${error.message}`);
       this.logger.error('Failed to unload model', { error: error.message });
@@ -1713,7 +1715,7 @@ export class LiveDemoTab {
 
       const leftLabel = document.createElement('div');
       leftLabel.className = 'split-view-label left';
-      leftLabel.textContent = 'Signal-Derived';
+      leftLabel.textContent = 'Illustrative';
       mainContainer.appendChild(leftLabel);
 
       const rightLabel = document.createElement('div');

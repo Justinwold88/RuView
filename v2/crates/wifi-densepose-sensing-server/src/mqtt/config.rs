@@ -19,6 +19,9 @@ pub struct MqttConfig {
     pub refresh_secs: u64,
     pub rates: PublishRates,
     pub publish_pose: bool,
+    /// Announce heart rate and the HR-derived possible-distress state.
+    /// Off by default (`--mqtt-publish-heart-rate`).
+    pub publish_heart_rate: bool,
     pub privacy_mode: bool,
 }
 
@@ -91,6 +94,7 @@ impl MqttConfig {
                 pose_hz: args.mqtt_rate_pose,
             },
             publish_pose: args.mqtt_publish_pose,
+            publish_heart_rate: args.mqtt_publish_heart_rate,
             // `--privacy-mode` is a server-wide flag (#2094); the caller sets
             // this from it after building the config.
             privacy_mode: false,
@@ -260,6 +264,7 @@ mod tests {
         assert_eq!(cfg.refresh_secs, 600);
         assert_eq!(cfg.rates.vitals_hz, 0.2);
         assert!(!cfg.publish_pose);
+        assert!(!cfg.publish_heart_rate);
         assert!(!cfg.privacy_mode);
     }
 

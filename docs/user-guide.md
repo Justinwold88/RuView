@@ -406,6 +406,33 @@ curl -s -H "Authorization: Bearer $RUVIEW_API_TOKEN" localhost:3000/api/v1/nodes
 
 Allowing the gateway admits anything that can reach the published port, so keep `5005/udp` off untrusted networks. Node identity still comes from the frame payload. With Docker Compose the service runs on the project network (`<project>_default`), so inspect that network's gateway rather than `bridge`. Docker Desktop on Windows has a related source-address problem; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
+#### Calibrate each room
+
+The server decides that someone is present by comparing each node's motion score with a threshold. The default, 0.04, suits a typical link. A noisy link can read an empty room as occupied all the time, and a clean one can miss someone walking. A one-minute calibration of the empty room sets each node's threshold from what that room actually produces, and scores the link from 0 to 100.
+
+```bash
+# Wait 10 s for you to leave, then record 60 s of the empty room
+curl -s -X POST -H "Authorization: Bearer $RUVIEW_API_TOKEN" \
+  localhost:3000/api/v1/calibration/motion/start
+
+# Progress while it runs; each node's threshold and link score when it ends
+curl -s -H "Authorization: Bearer $RUVIEW_API_TOKEN" \
+  localhost:3000/api/v1/calibration/motion
+```
+
+- Keep the room empty and still for the whole run: no people, no pets, and nothing moving such as a fan or a curtain. To change the timing, send a JSON body, for example `-H 'Content-Type: application/json' -d '{"duration_secs": 120, "delay_secs": 30}'`. `duration_secs` takes 20 to 600 and `delay_secs` 0 to 300.
+- Every node that sends CSI during the run is calibrated. Each result lists the threshold, the empty room's motion levels, and a `link_quality` score with its parts: SNR, frame rate, lost frames and empty-room noise.
+- `"noisy": true` means only clear motion will register on that link. Move the node or its antenna and calibrate again. If the run sees too much motion it is refused, and the node keeps its previous threshold.
+- Results are saved in `<data-dir>/motion_calibration.json` and reused after a restart. Calibrate again after moving a node or rearranging the room. `POST /api/v1/calibration/motion/reset` puts every node back on the default.
+- With OAuth scopes, starting and resetting need `sensing:admin`; reading the status needs `sensing:read`. The static `RUVIEW_API_TOKEN` can do all three.
+
+The threshold rule (1.3 times the empty room's 99th-percentile motion score) and the link score are tuned on SYNTHETIC rooms in the scenario harness and are not yet MEASURED on hardware. In those rooms:
+
+- On a noisy link (12 dB SNR) the default threshold read all 5 empty rooms as occupied; after calibration none were.
+- On a clean link (35 dB SNR) walking was detected in 81 to 88% of frames by default and 100% after calibration.
+- On a typical link (25 dB SNR) calibration cut walking frames from 86–100% to 69–88%, but still caught all 5 walk-ins within 2 s.
+- It does not help a person sitting still: their motion score looks like an empty room's.
+
 ### ESP32-C5 (Experimental CSI target)
 
 The C5 profile is headless: 2.4 GHz association, 240 MHz application CPU,
@@ -670,6 +697,9 @@ Base URL: `http://localhost:3000` (Docker) or `http://localhost:8080` (binary de
 | `POST` | `/api/v1/recording/start` | Start recording CSI frames to JSONL | `{"status":"recording","session_id":"..."}` |
 | `POST` | `/api/v1/recording/stop` | Stop the active recording | `{"status":"stopped","duration_secs":...}` |
 | `DELETE` | `/api/v1/recording/:id` | Delete a recording file | `{"status":"deleted"}` |
+| `POST` | `/api/v1/calibration/motion/start` | Start an empty-room motion calibration ([Calibrate each room](#calibrate-each-room)) | `{"success":true,"delay_secs":10.0,"duration_secs":60.0,...}` |
+| `GET` | `/api/v1/calibration/motion` | Calibration progress, last results, and each node's presence threshold | `{"run":null,"last_run":{...},"nodes":{"1":{"presence_threshold":0.052,...}}}` |
+| `POST` | `/api/v1/calibration/motion/reset` | Return every node to the default threshold | `{"success":true,"cleared":2,"cancelled_run":false}` |
 | `GET` | `/api/v1/train/status` | Training run status | `{"phase":"idle"}` |
 | `POST` | `/api/v1/train/start` | Start a training run | `{"status":"started"}` |
 | `POST` | `/api/v1/train/stop` | Stop the active training run | `{"status":"stopped"}` |
@@ -681,7 +711,7 @@ Base URL: `http://localhost:3000` (Docker) or `http://localhost:8080` (binary de
 | `GET` | `/api/v1/mesh/metrics` | ADR-110 mesh state in Prometheus exposition format ([iter 36](adr/ADR-110-esp32-c6-firmware-extension.md)) | `wifi_densepose_mesh_offset_us{node="9"} 1163565\n…` |
 | `GET` | `/api/field` | ADR-262 P3 — latest **signed RuField `FieldEvent`s** from the live sensing cycle, plus the signer pubkey + a `dev_signing_key` flag. Only egress-safe (P1/P2) events are surfaced; identity/biometric (P4/P5) and raw (P0) are held edge-local | `{"spec":"rufield","signer_pubkey_hex":"…","dev_signing_key":true,"events":[…]}` |
 
-Recording and model files live under the server's `--data-dir` (env `RUVIEW_DATA_DIR`, default `data`, resolved against the directory the server was started from): recordings in `<data-dir>/recordings/`, `.rvf` models in `<data-dir>/models/` unless `MODELS_DIR` is set, and the adaptive classifier in `<data-dir>/adaptive_model.json`.
+Recording and model files live under the server's `--data-dir` (env `RUVIEW_DATA_DIR`, default `data`, resolved against the directory the server was started from): recordings in `<data-dir>/recordings/`, `.rvf` models in `<data-dir>/models/` unless `MODELS_DIR` is set, the adaptive classifier in `<data-dir>/adaptive_model.json`, and motion calibrations in `<data-dir>/motion_calibration.json`.
 
 ### RuField surface (ADR-262 P3)
 

@@ -244,5 +244,235 @@
       "heart_est_bpm": 81.93
     }
   },
-  "hr_chance_mae_bpm": 13.09
+  "hr_chance_mae_bpm": 13.09,
+  "calibration": {
+    "clean": {
+      "snr_db": 35.0,
+      "default_pct": {
+        "empty_s0": 0.0,
+        "empty_s1": 0.0,
+        "empty_s2": 0.0,
+        "empty_s3": 0.0,
+        "empty_s4": 0.0,
+        "walk_s0": 80.86,
+        "walk_s1": 87.91,
+        "walk_s2": 80.64,
+        "walk_s3": 84.23,
+        "walk_s4": 81.95
+      },
+      "calibrated_pct": {
+        "empty_s0": 0.0,
+        "empty_s1": 0.0,
+        "empty_s2": 0.0,
+        "empty_s3": 0.0,
+        "empty_s4": 0.0,
+        "walk_s0": 100.0,
+        "walk_s1": 100.0,
+        "walk_s2": 100.0,
+        "walk_s3": 100.0,
+        "walk_s4": 100.0
+      },
+      "default_entry_secs": {
+        "enter_still_s0": 0.7,
+        "enter_still_s1": 0.65,
+        "enter_still_s2": 0.6,
+        "enter_still_s3": 0.65,
+        "enter_still_s4": 0.6
+      },
+      "calibrated_entry_secs": {
+        "enter_still_s0": 0.4,
+        "enter_still_s1": 0.4,
+        "enter_still_s2": 0.4,
+        "enter_still_s3": 0.4,
+        "enter_still_s4": 0.4
+      },
+      "presence_threshold": {
+        "empty_s0": 0.015,
+        "empty_s1": 0.015,
+        "empty_s2": 0.016,
+        "empty_s3": 0.015,
+        "empty_s4": 0.015,
+        "enter_still_s0": 0.015,
+        "enter_still_s1": 0.015,
+        "enter_still_s2": 0.015,
+        "enter_still_s3": 0.015,
+        "enter_still_s4": 0.018,
+        "walk_s0": 0.015,
+        "walk_s1": 0.015,
+        "walk_s2": 0.015,
+        "walk_s3": 0.015,
+        "walk_s4": 0.015
+      },
+      "link_score": {
+        "empty_s0": 87,
+        "empty_s1": 87,
+        "empty_s2": 86,
+        "empty_s3": 87,
+        "empty_s4": 87,
+        "enter_still_s0": 88,
+        "enter_still_s1": 87,
+        "enter_still_s2": 88,
+        "enter_still_s3": 88,
+        "enter_still_s4": 85,
+        "walk_s0": 87,
+        "walk_s1": 86,
+        "walk_s2": 87,
+        "walk_s3": 87,
+        "walk_s4": 87
+      },
+      "refused": {}
+    },
+    "noisy": {
+      "snr_db": 12.0,
+      "default_pct": {
+        "empty_s0": 100.0,
+        "empty_s1": 100.0,
+        "empty_s2": 100.0,
+        "empty_s3": 100.0,
+        "empty_s4": 100.0,
+        "walk_s0": 100.0,
+        "walk_s1": 100.0,
+        "walk_s2": 100.0,
+        "walk_s3": 100.0,
+        "walk_s4": 100.0
+      },
+      "calibrated_pct": {
+        "empty_s0": 0.0,
+        "empty_s1": 0.0,
+        "empty_s2": 0.0,
+        "empty_s3": 0.0,
+        "empty_s4": 0.0,
+        "walk_s0": 0.0,
+        "walk_s1": 0.0,
+        "walk_s2": 0.0,
+        "walk_s3": 0.0,
+        "walk_s4": 0.0
+      },
+      "default_entry_secs": {
+        "enter_still_s0": 0.0,
+        "enter_still_s1": 0.0,
+        "enter_still_s2": 0.0,
+        "enter_still_s3": 0.0,
+        "enter_still_s4": 0.0
+      },
+      "calibrated_entry_secs": {
+        "enter_still_s0": null,
+        "enter_still_s1": null,
+        "enter_still_s2": null,
+        "enter_still_s3": null,
+        "enter_still_s4": null
+      },
+      "presence_threshold": {
+        "empty_s0": 0.162,
+        "empty_s1": 0.153,
+        "empty_s2": 0.169,
+        "empty_s3": 0.171,
+        "empty_s4": 0.16,
+        "enter_still_s0": 0.16,
+        "enter_still_s1": 0.154,
+        "enter_still_s2": 0.161,
+        "enter_still_s3": 0.139,
+        "enter_still_s4": 0.188,
+        "walk_s0": 0.178,
+        "walk_s1": 0.167,
+        "walk_s2": 0.154,
+        "walk_s3": 0.152,
+        "walk_s4": 0.167
+      },
+      "link_score": {
+        "empty_s0": 42,
+        "empty_s1": 42,
+        "empty_s2": 42,
+        "empty_s3": 42,
+        "empty_s4": 42,
+        "enter_still_s0": 42,
+        "enter_still_s1": 42,
+        "enter_still_s2": 42,
+        "enter_still_s3": 42,
+        "enter_still_s4": 42,
+        "walk_s0": 42,
+        "walk_s1": 42,
+        "walk_s2": 42,
+        "walk_s3": 42,
+        "walk_s4": 42
+      },
+      "refused": {}
+    },
+    "typical": {
+      "snr_db": 25.0,
+      "default_pct": {
+        "empty_s0": 0.0,
+        "empty_s1": 2.55,
+        "empty_s2": 0.73,
+        "empty_s3": 0.73,
+        "empty_s4": 3.86,
+        "walk_s0": 98.41,
+        "walk_s1": 100.0,
+        "walk_s2": 85.86,
+        "walk_s3": 99.55,
+        "walk_s4": 92.27
+      },
+      "calibrated_pct": {
+        "empty_s0": 0.0,
+        "empty_s1": 0.0,
+        "empty_s2": 0.0,
+        "empty_s3": 0.0,
+        "empty_s4": 0.0,
+        "walk_s0": 83.82,
+        "walk_s1": 87.45,
+        "walk_s2": 69.27,
+        "walk_s3": 81.64,
+        "walk_s4": 75.45
+      },
+      "default_entry_secs": {
+        "enter_still_s0": 0.55,
+        "enter_still_s1": 0.5,
+        "enter_still_s2": 0.5,
+        "enter_still_s3": 0.6,
+        "enter_still_s4": 0.5
+      },
+      "calibrated_entry_secs": {
+        "enter_still_s0": 0.7,
+        "enter_still_s1": 0.65,
+        "enter_still_s2": 0.6,
+        "enter_still_s3": 0.6,
+        "enter_still_s4": 0.7
+      },
+      "presence_threshold": {
+        "empty_s0": 0.05,
+        "empty_s1": 0.054,
+        "empty_s2": 0.063,
+        "empty_s3": 0.054,
+        "empty_s4": 0.046,
+        "enter_still_s0": 0.047,
+        "enter_still_s1": 0.053,
+        "enter_still_s2": 0.047,
+        "enter_still_s3": 0.041,
+        "enter_still_s4": 0.065,
+        "walk_s0": 0.05,
+        "walk_s1": 0.054,
+        "walk_s2": 0.057,
+        "walk_s3": 0.05,
+        "walk_s4": 0.052
+      },
+      "link_score": {
+        "empty_s0": 56,
+        "empty_s1": 55,
+        "empty_s2": 55,
+        "empty_s3": 55,
+        "empty_s4": 59,
+        "enter_still_s0": 58,
+        "enter_still_s1": 55,
+        "enter_still_s2": 58,
+        "enter_still_s3": 62,
+        "enter_still_s4": 55,
+        "walk_s0": 56,
+        "walk_s1": 55,
+        "walk_s2": 55,
+        "walk_s3": 56,
+        "walk_s4": 55
+      },
+      "refused": {}
+    }
+  }
 }

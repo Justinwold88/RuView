@@ -25,6 +25,8 @@ pub mod inference;
 pub mod introspection;
 pub mod matter;
 pub mod model_format;
+/// Plan item 1.1: empty-room motion calibration and per-link quality score.
+pub mod motion_calibration;
 pub mod mqtt;
 pub mod path_safety;
 /// ADR-323: fail-closed pose physics integration and raw/refined view selection.

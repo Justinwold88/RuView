@@ -57,6 +57,7 @@ use wifi_densepose_sensing_server::bootstrap_baseline::{
 };
 // ADR-295 / ADR-297: canonical provenance state + per-node/room inference.
 use wifi_densepose_sensing_server::inference::{fuse_room, NodeInference, RoomInference};
+use wifi_densepose_sensing_server::motion_calibration::{self, MotionCalibration};
 use wifi_densepose_sensing_server::privacy_filter;
 use wifi_densepose_sensing_server::provenance::SourceState;
 
@@ -1152,6 +1153,9 @@ struct NodeState {
     debounce_candidate: String,
     baseline_motion: f64,
     baseline_frames: u64,
+    /// Smoothed motion above this reads as presence. Starts at the default
+    /// and is replaced by an empty-room calibration (plan item 1.1).
+    presence_threshold: f64,
     smoothed_hr: f64,
     smoothed_br: f64,
     smoothed_hr_conf: f64,
@@ -1555,6 +1559,7 @@ impl NodeState {
             debounce_candidate: "absent".to_string(),
             baseline_motion: 0.0,
             baseline_frames: 0,
+            presence_threshold: motion_calibration::DEFAULT_PRESENCE_THRESHOLD,
             smoothed_hr: 0.0,
             smoothed_br: 0.0,
             smoothed_hr_conf: 0.0,
@@ -2260,6 +2265,13 @@ struct AppStateInner {
     pub(crate) dedup_factor: f64,
     /// Data directory for persisting runtime config (parent of `firmware_dir`).
     pub(crate) data_dir: std::path::PathBuf,
+    /// Plan item 1.1: empty-room motion calibration per node, persisted in
+    /// `<data_dir>/motion_calibration.json`.
+    motion_calibrations: BTreeMap<u8, MotionCalibration>,
+    /// The motion calibration run in progress and when it started.
+    motion_calibration_run: Option<(std::time::Instant, motion_calibration::CalibrationRun)>,
+    /// Per-node results of the last finished run.
+    motion_calibration_last: Option<MotionCalibrationResults>,
     /// ADR-262 P3: the live RuField surface. Holds the dedicated ed25519 signer
     /// + a bounded ring of recent signed `FieldEvent`s + the `/ws/field`
     /// broadcast topic. The governed sensing cycle calls `emit()` on it once per
@@ -3281,6 +3293,9 @@ impl AppStateInner {
             p95_spectral_power: RollingP95::new(600, 60),
             dedup_factor: 3.0,
             data_dir: std::path::PathBuf::from("data"),
+            motion_calibrations: BTreeMap::new(),
+            motion_calibration_run: None,
+            motion_calibration_last: None,
             field_surface: Arc::new(RwLock::new(rufield_surface::FieldSurface::from_env())),
             pose_physics: pose_physics::PosePhysicsRuntime::new(
                 wifi_densepose_physics::PhysicsConfig::default(),
@@ -4545,16 +4560,10 @@ fn extract_features_from_frame(
 }
 
 /// Simple threshold classification (no smoothing) — used as the "raw" input.
+/// Uses the default presence threshold; calibrated nodes go through
+/// [`motion_calibration::classify_level`] with their own.
 fn raw_classify(score: f64) -> String {
-    if score > 0.25 {
-        "active".into()
-    } else if score > 0.12 {
-        "present_moving".into()
-    } else if score > 0.04 {
-        "present_still".into()
-    } else {
-        "absent".into()
-    }
+    motion_calibration::classify_level(score, motion_calibration::DEFAULT_PRESENCE_THRESHOLD).into()
 }
 
 /// Host WiFi has RSSI samples, not CSI spatial-frequency bins. Keep the CSI
@@ -4812,7 +4821,7 @@ fn smooth_and_classify_node(ns: &mut NodeState, raw: &mut ClassificationInfo, ra
     ns.smoothed_motion = ns.smoothed_motion * (1.0 - motion_alpha) + adjusted * motion_alpha;
     let sm = ns.smoothed_motion;
 
-    let candidate = raw_classify(sm);
+    let candidate = motion_calibration::classify_level(sm, ns.presence_threshold).to_string();
 
     if candidate == ns.current_motion_level {
         ns.debounce_counter = 0;
@@ -4831,6 +4840,102 @@ fn smooth_and_classify_node(ns: &mut NodeState, raw: &mut ClassificationInfo, ra
     raw.motion_level = ns.current_motion_level.clone();
     raw.presence = raw.motion_level != "absent";
     raw.confidence = (0.4 + sm * 0.6).clamp(0.0, 1.0);
+}
+
+/// Per-node results of a motion calibration run.
+type MotionCalibrationResults =
+    BTreeMap<u8, Result<MotionCalibration, motion_calibration::CalibrationError>>;
+
+/// Seconds a node must have run before its smoothed motion is used for
+/// calibration: the baseline warm-up plus time for the smoothing to settle.
+const MOTION_CALIBRATION_SETTLE_SECS: f64 = NODE_BASELINE_WARMUP_SECS + 5.0;
+
+/// This frame's calibration input, or `None` while the node is still
+/// settling. `elapsed_secs` is filled in by [`observe_motion_calibration`].
+fn motion_calibration_sample(
+    ns: &NodeState,
+    frame: &Esp32Frame,
+) -> Option<motion_calibration::CalibrationSample> {
+    let seconds_running = ns.baseline_frames as f64 / ns.csi_fps_ema.max(1.0);
+    (seconds_running >= MOTION_CALIBRATION_SETTLE_SECS).then(|| {
+        motion_calibration::CalibrationSample {
+            smoothed_motion: ns.smoothed_motion,
+            rssi_dbm: f64::from(frame.rssi),
+            noise_floor_dbm: f64::from(frame.noise_floor),
+            sequence: frame.sequence,
+            elapsed_secs: 0.0,
+        }
+    })
+}
+
+/// Feed a sample to the run in progress, finishing the run when it is due.
+fn observe_motion_calibration(
+    s: &mut AppStateInner,
+    node_id: u8,
+    mut sample: motion_calibration::CalibrationSample,
+) {
+    let Some((started, run)) = s.motion_calibration_run.as_mut() else {
+        return;
+    };
+    sample.elapsed_secs = started.elapsed().as_secs_f64();
+    run.observe(node_id, sample);
+    finish_motion_calibration_if_due(s);
+}
+
+/// Finish the run in progress if its collection time is over: apply the
+/// successful per-node results and persist them in the background.
+fn finish_motion_calibration_if_due(s: &mut AppStateInner) {
+    let due = s
+        .motion_calibration_run
+        .as_ref()
+        .is_some_and(|(started, run)| {
+            run.phase(started.elapsed().as_secs_f64()) == motion_calibration::RunPhase::Due
+        });
+    if !due {
+        return;
+    }
+    let Some((_, run)) = s.motion_calibration_run.take() else {
+        return;
+    };
+    let results = run.finish();
+    for (node_id, result) in &results {
+        match result {
+            Ok(cal) => {
+                info!(
+                    node_id,
+                    presence_threshold = cal.presence_threshold,
+                    link_quality = cal.link_quality.score,
+                    noisy = cal.noisy,
+                    "motion calibration applied"
+                );
+                s.motion_calibrations.insert(*node_id, cal.clone());
+            }
+            Err(error) => {
+                warn!(node_id, %error, "motion calibration failed; keeping the previous threshold")
+            }
+        }
+    }
+    if results.is_empty() {
+        warn!("motion calibration finished without CSI frames from any node");
+    }
+    s.motion_calibration_last = Some(results);
+    persist_motion_calibrations(s);
+}
+
+fn persist_motion_calibrations(s: &AppStateInner) {
+    let path = s.data_dir.join(motion_calibration::STORE_FILE);
+    let nodes = s.motion_calibrations.clone();
+    let write = move || {
+        if let Err(error) = motion_calibration::save(&path, &nodes) {
+            warn!(path = %path.display(), %error, "could not save motion calibration");
+        }
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn_blocking(write);
+        }
+        Err(_) => write(),
+    }
 }
 
 #[cfg(test)]
@@ -10148,6 +10253,396 @@ async fn calibration_stop(
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MotionCalibrationStartRequest {
+    duration_secs: Option<f64>,
+    delay_secs: Option<f64>,
+}
+
+fn motion_calibration_error(
+    status: StatusCode,
+    code: &str,
+    message: String,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        status,
+        Json(serde_json::json!({
+            "success": false,
+            "error_code": code,
+            "error": message,
+        })),
+    )
+}
+
+/// `POST /api/v1/calibration/motion/start` (plan item 1.1). Body is optional:
+/// `{"duration_secs": 60, "delay_secs": 10}`. Every node that sends CSI
+/// during the run gets a presence threshold from the empty room and a link
+/// quality score. Requires `sensing:admin` when bearer auth is on.
+async fn motion_calibration_start(
+    State(state): State<SharedState>,
+    body: Bytes,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let request =
+        if body.iter().all(u8::is_ascii_whitespace) {
+            MotionCalibrationStartRequest::default()
+        } else {
+            match serde_json::from_slice::<MotionCalibrationStartRequest>(&body) {
+                Ok(request) => request,
+                Err(_) => return motion_calibration_error(
+                    StatusCode::BAD_REQUEST,
+                    "motion_calibration_request_invalid",
+                    "Body must be empty or JSON like {\"duration_secs\": 60, \"delay_secs\": 10}."
+                        .into(),
+                ),
+            }
+        };
+    let run =
+        match motion_calibration::CalibrationRun::new(request.duration_secs, request.delay_secs) {
+            Ok(run) => run,
+            Err(error) => {
+                return motion_calibration_error(
+                    StatusCode::BAD_REQUEST,
+                    "motion_calibration_request_invalid",
+                    error.to_string(),
+                )
+            }
+        };
+    let mut s = state.write().await;
+    finish_motion_calibration_if_due(&mut s);
+    if s.motion_calibration_run.is_some() {
+        return motion_calibration_error(
+            StatusCode::CONFLICT,
+            "motion_calibration_running",
+            "A motion calibration is already running.".into(),
+        );
+    }
+    let (delay_secs, duration_secs) = (run.delay_secs(), run.duration_secs());
+    s.motion_calibration_run = Some((std::time::Instant::now(), run));
+    info!(delay_secs, duration_secs, "motion calibration started");
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "success": true,
+            "phase": motion_calibration::RunPhase::Waiting,
+            "delay_secs": delay_secs,
+            "duration_secs": duration_secs,
+            "instructions": format!(
+                "Leave the room within {delay_secs:.0} s and keep it empty for {duration_secs:.0} s. \
+                 Pets and moving fans count as motion."
+            ),
+        })),
+    )
+}
+
+/// `GET /api/v1/calibration/motion`: the run in progress, the last run's
+/// per-node results, and the threshold every known node is using.
+async fn motion_calibration_status(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let mut s = state.write().await;
+    finish_motion_calibration_if_due(&mut s);
+    let run = s.motion_calibration_run.as_ref().map(|(started, run)| {
+        let elapsed = started.elapsed().as_secs_f64();
+        serde_json::json!({
+            "phase": run.phase(elapsed),
+            "seconds_remaining": (run.seconds_remaining(elapsed) * 10.0).round() / 10.0,
+            "frames": run.frames(),
+        })
+    });
+    let last_run = s.motion_calibration_last.as_ref().map(|results| {
+        results
+            .iter()
+            .map(|(node_id, result)| {
+                let value = match result {
+                    Ok(calibration) => serde_json::json!({
+                        "success": true,
+                        "calibration": calibration,
+                    }),
+                    Err(error) => serde_json::json!({
+                        "success": false,
+                        "error_code": error,
+                        "error": error.to_string(),
+                    }),
+                };
+                (node_id.to_string(), value)
+            })
+            .collect::<serde_json::Map<_, _>>()
+    });
+    let node_ids: std::collections::BTreeSet<u8> = s
+        .node_states
+        .keys()
+        .chain(s.motion_calibrations.keys())
+        .copied()
+        .collect();
+    let nodes = node_ids
+        .into_iter()
+        .map(|node_id| {
+            let calibration = s.motion_calibrations.get(&node_id);
+            (
+                node_id.to_string(),
+                serde_json::json!({
+                    "presence_threshold": calibration.map_or(
+                        motion_calibration::DEFAULT_PRESENCE_THRESHOLD,
+                        |c| c.presence_threshold,
+                    ),
+                    "calibrated": calibration.is_some(),
+                    "calibration": calibration,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    Json(serde_json::json!({
+        "run": run,
+        "last_run": last_run,
+        "nodes": nodes,
+        "default_presence_threshold": motion_calibration::DEFAULT_PRESENCE_THRESHOLD,
+        "note": "Thresholds and link scores come from a heuristic tuned on SYNTHETIC rooms; not yet validated on hardware.",
+    }))
+}
+
+/// `POST /api/v1/calibration/motion/reset`: forget every node's calibration
+/// (nodes go back to the default threshold) and cancel a run in progress.
+/// Requires `sensing:admin` when bearer auth is on.
+async fn motion_calibration_reset(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let mut s = state.write().await;
+    let cleared = s.motion_calibrations.len();
+    let cancelled_run = s.motion_calibration_run.take().is_some();
+    s.motion_calibrations.clear();
+    s.motion_calibration_last = None;
+    persist_motion_calibrations(&s);
+    info!(cleared, cancelled_run, "motion calibration reset");
+    Json(serde_json::json!({
+        "success": true,
+        "cleared": cleared,
+        "cancelled_run": cancelled_run,
+    }))
+}
+
+#[cfg(test)]
+mod motion_calibration_http_tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("ruview-motion-http-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn app(data_dir: PathBuf) -> (Router, SharedState) {
+        let mut inner = AppStateInner::minimal();
+        inner.data_dir = data_dir;
+        let state = Arc::new(RwLock::new(inner));
+        let app = Router::new()
+            .route("/api/v1/calibration/motion", get(motion_calibration_status))
+            .route(
+                "/api/v1/calibration/motion/start",
+                post(motion_calibration_start),
+            )
+            .route(
+                "/api/v1/calibration/motion/reset",
+                post(motion_calibration_reset),
+            )
+            .with_state(state.clone());
+        (app, state)
+    }
+
+    async fn call(
+        app: &Router,
+        method: &str,
+        uri: &str,
+        body: &str,
+    ) -> (StatusCode, serde_json::Value) {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_owned()))
+            .expect("request");
+        let resp = app.clone().oneshot(req).await.expect("response");
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .expect("body");
+        (status, serde_json::from_slice(&bytes).expect("json body"))
+    }
+
+    fn sample(i: u32, motion: f64) -> motion_calibration::CalibrationSample {
+        motion_calibration::CalibrationSample {
+            smoothed_motion: motion,
+            rssi_dbm: -55.0,
+            noise_floor_dbm: -90.0,
+            sequence: i,
+            elapsed_secs: f64::from(i) / 20.0,
+        }
+    }
+
+    #[tokio::test]
+    async fn start_validates_refuses_a_second_run_and_reset_cancels() {
+        let (app, _) = app(temp_dir("start"));
+        let (code, body) = call(&app, "POST", "/api/v1/calibration/motion/start", "{nope").await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{body}");
+        let (code, body) = call(
+            &app,
+            "POST",
+            "/api/v1/calibration/motion/start",
+            r#"{"duration_secs": 5}"#,
+        )
+        .await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{body}");
+        let (code, body) = call(
+            &app,
+            "POST",
+            "/api/v1/calibration/motion/start",
+            r#"{"surprise": 1}"#,
+        )
+        .await;
+        assert_eq!(
+            code,
+            StatusCode::BAD_REQUEST,
+            "unknown fields are refused: {body}"
+        );
+
+        let (code, body) = call(&app, "POST", "/api/v1/calibration/motion/start", "").await;
+        assert_eq!(code, StatusCode::ACCEPTED, "{body}");
+        assert_eq!(body["duration_secs"], 60.0);
+        assert_eq!(body["delay_secs"], 10.0);
+        let (code, _) = call(&app, "POST", "/api/v1/calibration/motion/start", "").await;
+        assert_eq!(code, StatusCode::CONFLICT);
+
+        let (code, status) = call(&app, "GET", "/api/v1/calibration/motion", "").await;
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(status["run"]["phase"], "waiting");
+        assert_eq!(status["default_presence_threshold"], 0.04);
+
+        let (_, reset) = call(&app, "POST", "/api/v1/calibration/motion/reset", "").await;
+        assert_eq!(reset["cancelled_run"], true);
+        let (_, status) = call(&app, "GET", "/api/v1/calibration/motion", "").await;
+        assert!(status["run"].is_null());
+    }
+
+    #[tokio::test]
+    async fn finished_run_applies_persists_and_resets_thresholds() {
+        let dir = temp_dir("finish");
+        let (app, state) = app(dir.clone());
+        {
+            let mut run = motion_calibration::CalibrationRun::new(Some(20.0), Some(0.0)).unwrap();
+            for i in 0..400 {
+                run.observe(7, sample(i, 0.02));
+            }
+            for i in 0..3 {
+                run.observe(8, sample(i, 0.02));
+            }
+            let started = std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(30))
+                .expect("monotonic clock is past 30 s");
+            state.write().await.motion_calibration_run = Some((started, run));
+        }
+
+        let (_, status) = call(&app, "GET", "/api/v1/calibration/motion", "").await;
+        assert!(
+            status["run"].is_null(),
+            "a due run is finished on read: {status}"
+        );
+        assert_eq!(status["last_run"]["7"]["success"], true);
+        assert_eq!(status["last_run"]["8"]["success"], false);
+        assert_eq!(
+            status["last_run"]["8"]["error_code"]["code"],
+            "too_few_frames"
+        );
+        assert_eq!(status["nodes"]["7"]["calibrated"], true);
+        assert_eq!(status["nodes"]["7"]["presence_threshold"], 0.026);
+        assert!(
+            status["nodes"].get("8").is_none(),
+            "a failed node keeps no calibration"
+        );
+
+        let path = dir.join(motion_calibration::STORE_FILE);
+        let mut stored = BTreeMap::new();
+        for _ in 0..100 {
+            stored = motion_calibration::load(&path).unwrap_or_default();
+            if !stored.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(stored.get(&7).map(|c| c.presence_threshold), Some(0.026));
+
+        let (_, reset) = call(&app, "POST", "/api/v1/calibration/motion/reset", "").await;
+        assert_eq!(reset["cleared"], 1);
+        let (_, status) = call(&app, "GET", "/api/v1/calibration/motion", "").await;
+        assert!(status["nodes"].get("7").is_none());
+        for _ in 0..100 {
+            if motion_calibration::load(&path)
+                .map(|m| m.is_empty())
+                .unwrap_or(false)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(motion_calibration::load(&path).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn samples_wait_for_the_node_to_settle() {
+        let frame = Esp32Frame {
+            magic: 0xC511_0001,
+            node_id: 1,
+            n_antennas: 1,
+            n_subcarriers: 1,
+            freq_mhz: 2437,
+            sequence: 9,
+            rssi: -55,
+            noise_floor: -92,
+            ppdu_type: wifi_densepose_hardware::PpduType::HtLegacy,
+            adr018_flags: wifi_densepose_hardware::Adr018Flags::default(),
+            amplitudes: vec![1.0],
+            phases: vec![0.0],
+        };
+        let mut ns = NodeState::new();
+        ns.csi_fps_ema = 20.0;
+        ns.baseline_frames = 100; // 5 s
+        assert!(motion_calibration_sample(&ns, &frame).is_none());
+        ns.baseline_frames = 200; // 10 s
+        ns.smoothed_motion = 0.03;
+        let sample = motion_calibration_sample(&ns, &frame).expect("settled");
+        assert_eq!(sample.smoothed_motion, 0.03);
+        assert_eq!(sample.rssi_dbm - sample.noise_floor_dbm, 37.0);
+        assert_eq!(sample.sequence, 9);
+    }
+
+    #[test]
+    fn calibrated_threshold_changes_the_node_classification() {
+        // A steady smoothed score of about 0.03 reads absent at the default
+        // threshold and present_still once a quiet link calibrates to 0.02.
+        for (threshold, expected) in [(0.04, "absent"), (0.02, "present_still")] {
+            let mut ns = NodeState::new();
+            ns.csi_fps_ema = 20.0;
+            ns.presence_threshold = threshold;
+            let mut level = String::new();
+            for _ in 0..400 {
+                let mut c = ClassificationInfo {
+                    motion_level: "absent".into(),
+                    presence: false,
+                    confidence: 0.5,
+                };
+                // Baseline subtraction keeps 30% of a steady raw score.
+                smooth_and_classify_node(&mut ns, &mut c, 0.1);
+                level = c.motion_level;
+            }
+            assert!(
+                (ns.smoothed_motion - 0.03).abs() < 0.002,
+                "{}",
+                ns.smoothed_motion
+            );
+            assert_eq!(level, expected, "threshold {threshold}");
+        }
+    }
+}
+
 async fn calibration_status(State(state): State<SharedState>) -> Json<serde_json::Value> {
     let s = state.read().await;
     let now = std::time::Instant::now();
@@ -13305,7 +13800,14 @@ async fn udp_receiver_task(
                     // to avoid unsafe raw pointer (review finding #2).
                     let adaptive_model_clone = s.adaptive_model.clone();
 
+                    let presence_threshold = s
+                        .motion_calibrations
+                        .get(&node_id)
+                        .map_or(motion_calibration::DEFAULT_PRESENCE_THRESHOLD, |c| {
+                            c.presence_threshold
+                        });
                     let ns = s.node_states.entry(node_id).or_insert_with(NodeState::new);
+                    ns.presence_threshold = presence_threshold;
                     // ADR-110 iter 19 — feed the per-node fps EMA from real
                     // CSI arrivals. The helper sets `last_frame_time` as a
                     // side effect, so the previous bare assignment is gone.
@@ -13339,6 +13841,7 @@ async fn udp_receiver_task(
                         raw_motion,
                     ) = extract_features_from_frame(&frame, &ns.frame_history, sample_rate_hz);
                     smooth_and_classify_node(ns, &mut classification, raw_motion);
+                    let calibration_sample = motion_calibration_sample(ns, &frame);
 
                     // Adaptive override using cloned model (safe, no raw pointers).
                     if let Some(ref model) = adaptive_model_clone {
@@ -13408,6 +13911,10 @@ async fn udp_receiver_task(
                     // Done with per-node mutable borrow; now read aggregated
                     // state from all nodes (the borrow of `ns` ends here).
                     // (We re-borrow node_states immutably via `s` below.)
+
+                    if let Some(sample) = calibration_sample {
+                        observe_motion_calibration(&mut s, node_id, sample);
+                    }
 
                     s.rssi_history.push_back(features.mean_rssi);
                     if s.rssi_history.len() > 60 {
@@ -14893,6 +15400,25 @@ async fn main() {
         warn!(path = %data_dir.display(), %error, "Could not create server data directory");
     }
     let runtime_config = load_runtime_config(&data_dir);
+    let motion_calibrations = {
+        let path = data_dir.join(motion_calibration::STORE_FILE);
+        match motion_calibration::load(&path) {
+            Ok(nodes) => {
+                if !nodes.is_empty() {
+                    info!(
+                        "Loaded motion calibration for {} node(s) from {}",
+                        nodes.len(),
+                        path.display()
+                    );
+                }
+                nodes
+            }
+            Err(error) => {
+                warn!(%error, "Ignoring stored motion calibration; nodes use the default threshold");
+                BTreeMap::new()
+            }
+        }
+    };
     let adaptive_model_path = adaptive_classifier::model_path(&data_dir);
     // ADR-271: resolve (or generate + persist) the browser-session signing key
     // before any request can arrive. Zero-config for a single appliance; the
@@ -15241,6 +15767,9 @@ async fn main() {
         // ADR-044 §5.3: runtime-configurable dedup factor (persisted).
         dedup_factor: runtime_config.dedup_factor,
         data_dir: data_dir.clone(),
+        motion_calibrations,
+        motion_calibration_run: None,
+        motion_calibration_last: None,
         field_surface: field_surface.clone(),
         pose_physics: pose_physics::PosePhysicsRuntime::new(
             wifi_densepose_physics::PhysicsConfig::default(),
@@ -15624,6 +16153,16 @@ async fn main() {
         .route("/api/v1/calibration/cancel", post(calibration_cancel))
         .route("/api/v1/calibration/status", get(calibration_status))
         .route("/api/v1/calibration/reset", post(calibration_reset))
+        // Plan item 1.1: empty-room motion calibration and link quality.
+        .route("/api/v1/calibration/motion", get(motion_calibration_status))
+        .route(
+            "/api/v1/calibration/motion/start",
+            post(motion_calibration_start),
+        )
+        .route(
+            "/api/v1/calibration/motion/reset",
+            post(motion_calibration_reset),
+        )
         // ADR-044 §5.3: runtime-configurable dedup factor
         .route(
             "/api/v1/config/dedup-factor",

@@ -17,6 +17,11 @@
 //! It has no multipath from the person, no furniture motion, no pets and no
 //! interference.
 //!
+//! A second set of runs checks the empty-room calibration (plan item 1.1):
+//! empty, walking and walk-in rooms on a typical, a noisy and a clean link,
+//! each run once with the default presence threshold and once with the
+//! threshold a 60 s calibration of the same empty room produced.
+//!
 //! The run is a ratchet, not a target. It fails when a metric is worse than
 //! the committed baseline (`tests/fixtures/scenario_baseline.json`) by more
 //! than a small tolerance. After an intentional improvement, refresh the
@@ -52,6 +57,47 @@ const HELD_SHARE_PCT: f64 = 90.0;
 /// these only absorb floating-point differences between platforms.
 const TOL_PCT: f64 = 2.0;
 const TOL_BPM: f64 = 0.25;
+
+/// Link conditions for the calibration runs. `typical` is the scenario
+/// default used everywhere else.
+struct Link {
+    name: &'static str,
+    snr_db: f64,
+    agc_db: f64,
+    sto_ns: f64,
+}
+
+const LINKS: [Link; 3] = [
+    Link {
+        name: "typical",
+        snr_db: 25.0,
+        agc_db: 0.5,
+        sto_ns: 25.0,
+    },
+    Link {
+        name: "noisy",
+        snr_db: 12.0,
+        agc_db: 1.5,
+        sto_ns: 40.0,
+    },
+    Link {
+        name: "clean",
+        snr_db: 35.0,
+        agc_db: 0.2,
+        sto_ns: 10.0,
+    },
+];
+
+/// XORed into a scenario's seed to give its calibration segment fresh noise.
+const CALIBRATION_STREAM: u64 = 0xCA1B_0000_0000_0001;
+/// When the person enters in enter-then-sit scenarios, and how long they walk.
+const T_ENTER_SECS: f64 = 30.0;
+const T_SIT_SECS: f64 = 40.0;
+/// G2's walk-in target: presence within 2 s of entering.
+const WALK_IN_SECS: f64 = 2.0;
+
+/// Reported noise floor; RSSI is set from the link's SNR.
+const NOISE_FLOOR_DBM: f64 = -90.0;
 
 const C_LIGHT: f64 = 299_792_458.0;
 const FC_HZ: f64 = 2.437e9; // channel 6
@@ -235,6 +281,14 @@ fn rotate(re: f64, im: f64, theta: f64) -> (f64, f64) {
 }
 
 fn generate(sc: &Scenario) -> Generated {
+    generate_with(sc, None)
+}
+
+/// `impairment_seed` replaces the random stream for everything after the
+/// room and the person (per-packet impairments and noise). The room itself
+/// still comes from `sc.seed`, so a calibration segment can record the same
+/// room with fresh noise.
+fn generate_with(sc: &Scenario, impairment_seed: Option<u64>) -> Generated {
     let mut rng = Rng::new(sc.seed);
     let k_idx: Vec<f64> = (-26..=26).filter(|k| *k != 0).map(|k| k as f64).collect();
     let fk: Vec<f64> = k_idx.iter().map(|k| FC_HZ + k * DF_HZ).collect();
@@ -272,8 +326,13 @@ fn generate(sc: &Scenario) -> Generated {
         sway.push(2.0 * 0.4e-3 * acc / (n as f64).sqrt());
     }
 
+    let mut rng = match impairment_seed {
+        Some(seed) => Rng::new(seed),
+        None => rng,
+    };
+
     let d0 = 4.0; // reflection path length, m
-    let (t_enter, t_sit) = (30.0, 40.0);
+    let (t_enter, t_sit) = (T_ENTER_SECS, T_SIT_SECS);
     let sit_index = (t_sit * sc.fs).round() as usize;
     let walk_path = |t: f64| d0 + 1.5 * (0.8 / 1.5 * t).sin();
     let sit_anchor = walk_path(sit_index as f64 / sc.fs - t_enter);
@@ -344,6 +403,7 @@ fn generate(sc: &Scenario) -> Generated {
 
 struct FrameOut {
     presence: bool,
+    smoothed_motion: f64,
     detector_br: Option<f64>,
     detector_hr: Option<f64>,
 }
@@ -365,7 +425,7 @@ fn frame_from(amplitudes: Vec<f64>, phases: Vec<f64>, sequence: u32) -> Esp32Fra
         freq_mhz: 2437,
         sequence,
         rssi: -50,
-        noise_floor: -90,
+        noise_floor: NOISE_FLOOR_DBM as i8,
         ppdu_type: wifi_densepose_hardware::PpduType::HtLegacy,
         adr018_flags: wifi_densepose_hardware::Adr018Flags::default(),
         amplitudes,
@@ -374,7 +434,22 @@ fn frame_from(amplitudes: Vec<f64>, phases: Vec<f64>, sequence: u32) -> Esp32Fra
 }
 
 fn replay(sc: &Scenario, g: &Generated, timing: &mut Timing) -> Vec<FrameOut> {
+    replay_with_threshold(
+        sc,
+        g,
+        timing,
+        motion_calibration::DEFAULT_PRESENCE_THRESHOLD,
+    )
+}
+
+fn replay_with_threshold(
+    sc: &Scenario,
+    g: &Generated,
+    timing: &mut Timing,
+    presence_threshold: f64,
+) -> Vec<FrameOut> {
     let mut ns = NodeState::new();
+    ns.presence_threshold = presence_threshold;
     ns.csi_fps_ema = sc.fs;
     ns.vital_detector = VitalSignDetector::new(sc.fs);
     let mut out = Vec::with_capacity(g.amplitudes.len());
@@ -403,9 +478,111 @@ fn replay(sc: &Scenario, g: &Generated, timing: &mut Timing) -> Vec<FrameOut> {
         timing.total_us += t_all.elapsed().as_secs_f64() * 1e6;
         out.push(FrameOut {
             presence: cls.presence,
+            smoothed_motion: ns.smoothed_motion,
             detector_br: raw.breathing_rate_bpm,
             detector_hr: raw.heart_rate_bpm,
         });
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Empty-room calibration (plan item 1.1)
+// ---------------------------------------------------------------------------
+
+/// Calibrate `sc`'s room the way the server does: record the same room,
+/// empty, with fresh noise, wait out the start delay, then feed 60 s of the
+/// node's smoothed motion to the collector.
+fn calibrate(sc: &Scenario) -> Result<MotionCalibration, motion_calibration::CalibrationError> {
+    let mut empty = sc.clone();
+    empty.person = Person::None;
+    empty.seconds =
+        motion_calibration::DEFAULT_DELAY_SECS + motion_calibration::DEFAULT_CALIBRATION_SECS;
+    let g = generate_with(&empty, Some(sc.seed ^ CALIBRATION_STREAM));
+    let out = replay(&empty, &g, &mut Timing::default());
+    let skip = (motion_calibration::DEFAULT_DELAY_SECS * sc.fs).round() as usize;
+    let mut collector = motion_calibration::CalibrationCollector::default();
+    for (i, f) in out.iter().enumerate().skip(skip) {
+        collector.push(motion_calibration::CalibrationSample {
+            smoothed_motion: f.smoothed_motion,
+            rssi_dbm: NOISE_FLOOR_DBM + sc.snr_db,
+            noise_floor_dbm: NOISE_FLOOR_DBM,
+            sequence: i as u32,
+            elapsed_secs: i as f64 / sc.fs,
+        });
+    }
+    collector.finish()
+}
+
+/// Seconds from entry to the first presence frame, within the walk.
+fn entry_latency_secs(out: &[FrameOut], fs: f64) -> Option<f64> {
+    let from = (T_ENTER_SECS * fs).round() as usize;
+    let to = ((T_SIT_SECS * fs).round() as usize).min(out.len());
+    out[from..to]
+        .iter()
+        .position(|f| f.presence)
+        .map(|i| round2(i as f64 / fs))
+}
+
+fn calibration_runs() -> BTreeMap<String, LinkRuns> {
+    let mut out = BTreeMap::new();
+    for link in &LINKS {
+        let mut runs = LinkRuns {
+            snr_db: link.snr_db,
+            ..LinkRuns::default()
+        };
+        for base in scenarios()
+            .into_iter()
+            .filter(|s| matches!(s.family, Family::Empty | Family::Walk | Family::EnterStill))
+        {
+            let mut sc = base;
+            sc.snr_db = link.snr_db;
+            sc.agc_db = link.agc_db;
+            sc.sto_ns = link.sto_ns;
+            let g = generate(&sc);
+            let from = (10.0 * sc.fs).round() as usize;
+            let mut timing = Timing::default();
+            let default = replay(&sc, &g, &mut timing);
+            if sc.family == Family::EnterStill {
+                runs.default_entry_secs
+                    .insert(sc.name.clone(), entry_latency_secs(&default, sc.fs));
+            } else {
+                runs.default_pct.insert(
+                    sc.name.clone(),
+                    round2(share_pct(&default, from, default.len())),
+                );
+            }
+            let threshold = match calibrate(&sc) {
+                Ok(cal) => {
+                    runs.presence_threshold.insert(
+                        sc.name.clone(),
+                        (cal.presence_threshold * 1000.0).round() / 1000.0,
+                    );
+                    runs.link_score
+                        .insert(sc.name.clone(), cal.link_quality.score);
+                    cal.presence_threshold
+                }
+                Err(error) => {
+                    let code = serde_json::to_value(&error)
+                        .ok()
+                        .and_then(|v| v.get("code").and_then(|c| c.as_str()).map(str::to_owned))
+                        .unwrap_or_else(|| "unknown".into());
+                    runs.refused.insert(sc.name.clone(), code);
+                    motion_calibration::DEFAULT_PRESENCE_THRESHOLD
+                }
+            };
+            let calibrated = replay_with_threshold(&sc, &g, &mut timing, threshold);
+            if sc.family == Family::EnterStill {
+                runs.calibrated_entry_secs
+                    .insert(sc.name.clone(), entry_latency_secs(&calibrated, sc.fs));
+            } else {
+                runs.calibrated_pct.insert(
+                    sc.name.clone(),
+                    round2(share_pct(&calibrated, from, calibrated.len())),
+                );
+            }
+        }
+        out.insert(link.name.to_string(), runs);
     }
     out
 }
@@ -457,6 +634,25 @@ struct Summary {
     still_person_total: usize,
 }
 
+/// Calibration runs on one link. Presence shares are post-warm-up, per
+/// scenario; empty rooms should read low and walking rooms high.
+#[derive(Serialize, Deserialize, Default)]
+struct LinkRuns {
+    snr_db: f64,
+    default_pct: BTreeMap<String, f64>,
+    calibrated_pct: BTreeMap<String, f64>,
+    /// Seconds from a person entering (enter-then-sit scenarios) to the
+    /// first frame that reports presence; None when not within the 10 s walk.
+    default_entry_secs: BTreeMap<String, Option<f64>>,
+    calibrated_entry_secs: BTreeMap<String, Option<f64>>,
+    /// Reported, not ratcheted.
+    presence_threshold: BTreeMap<String, f64>,
+    /// Reported, not ratcheted.
+    link_score: BTreeMap<String, u8>,
+    /// Refused calibrations (the run then keeps the default threshold).
+    refused: BTreeMap<String, String>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Metrics {
     evidence: String,
@@ -471,6 +667,9 @@ struct Metrics {
     vitals_by_scenario: BTreeMap<String, VitalsScenario>,
     /// Heart-rate error from always guessing 80 BPM: the chance level.
     hr_chance_mae_bpm: f64,
+    /// Empty-room calibration (plan item 1.1), keyed by link.
+    #[serde(default)]
+    calibration: BTreeMap<String, LinkRuns>,
 }
 
 fn share_pct(xs: &[FrameOut], from: usize, to: usize) -> f64 {
@@ -515,6 +714,7 @@ fn score(runs: &[(Scenario, Vec<FrameOut>)]) -> Metrics {
         vitals: BTreeMap::new(),
         vitals_by_scenario: BTreeMap::new(),
         hr_chance_mae_bpm: 0.0,
+        calibration: BTreeMap::new(),
     };
     let mut vitals_errors: BTreeMap<String, (Vec<f64>, usize, Vec<f64>, usize)> = BTreeMap::new();
     let mut chance = Vec::new();
@@ -644,6 +844,56 @@ fn regressions(now: &Metrics, base: &Metrics) -> Vec<String> {
             }
         }
     }
+    for (link, b) in &base.calibration {
+        let Some(n) = now.calibration.get(link) else {
+            bad.push(format!("calibration {link}: missing"));
+            continue;
+        };
+        for (label, nmap, bmap) in [
+            ("default", &n.default_pct, &b.default_pct),
+            ("calibrated", &n.calibrated_pct, &b.calibrated_pct),
+        ] {
+            for (name, bv) in bmap {
+                let empty = name.starts_with("empty");
+                let nv = nmap
+                    .get(name)
+                    .copied()
+                    .unwrap_or(if empty { f64::INFINITY } else { 0.0 });
+                let worse = if empty {
+                    nv > bv + TOL_PCT
+                } else {
+                    nv < bv - TOL_PCT
+                };
+                if worse {
+                    bad.push(format!(
+                        "calibration {link} {name} ({label} threshold): presence {nv:.1}% (baseline {bv:.1}%)"
+                    ));
+                }
+            }
+        }
+        for (label, nmap, bmap) in [
+            ("default", &n.default_entry_secs, &b.default_entry_secs),
+            (
+                "calibrated",
+                &n.calibrated_entry_secs,
+                &b.calibrated_entry_secs,
+            ),
+        ] {
+            for (name, bv) in bmap {
+                let nv = nmap.get(name).copied().flatten();
+                let later = match (nv, bv) {
+                    (None, Some(_)) => true,
+                    (Some(n), Some(b)) => n > b + 0.5,
+                    _ => false,
+                };
+                if later {
+                    bad.push(format!(
+                        "calibration {link} {name} ({label} threshold): walk-in detected after {nv:?} s (baseline {bv:?} s)"
+                    ));
+                }
+            }
+        }
+    }
     // Heart rate is not ratcheted: it is at chance level and is being hidden
     // (plan item 0.4), so its number is reported only.
     for (level, b) in &base.vitals {
@@ -721,6 +971,88 @@ fn report_markdown(m: &Metrics, t: &Timing) -> String {
         per(t.vitals_us),
         per(t.total_us)
     );
+    if !m.calibration.is_empty() {
+        let _ = writeln!(
+            r,
+            "\n### Empty-room calibration (plan item 1.1, SYNTHETIC)\n"
+        );
+        let _ = writeln!(
+            r,
+            "Each room is calibrated from 60 s of the same room, empty, with fresh noise. \
+             Presence shares are of post-warm-up frames.\n"
+        );
+        let _ = writeln!(
+            r,
+            "| Link | Empty rooms occupied, default → calibrated | Walking frames detected, default → calibrated | Walk-ins caught within {WALK_IN_SECS:.0} s, default → calibrated | Calibrated threshold | Link score | Refused |\n|---|---|---|---|---|---|---|"
+        );
+        let span = |xs: Vec<f64>, digits: usize| -> String {
+            let lo = xs.iter().copied().fold(f64::INFINITY, f64::min);
+            let hi = xs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            if xs.is_empty() {
+                "n/a".into()
+            } else if (hi - lo).abs() < 1e-9 {
+                format!("{lo:.digits$}")
+            } else {
+                format!("{lo:.digits$}–{hi:.digits$}")
+            }
+        };
+        for link in LINKS.iter().map(|l| l.name) {
+            let Some(c) = m.calibration.get(link) else {
+                continue;
+            };
+            let occupied = |map: &BTreeMap<String, f64>| {
+                let empty: Vec<f64> = map
+                    .iter()
+                    .filter(|(k, _)| k.starts_with("empty"))
+                    .map(|(_, v)| *v)
+                    .collect();
+                format!(
+                    "{} of {}",
+                    empty.iter().filter(|v| **v > OCCUPIED_SHARE_PCT).count(),
+                    empty.len()
+                )
+            };
+            let walking = |map: &BTreeMap<String, f64>| {
+                span(
+                    map.iter()
+                        .filter(|(k, _)| k.starts_with("walk"))
+                        .map(|(_, v)| *v)
+                        .collect(),
+                    1,
+                ) + "%"
+            };
+            let caught = |map: &BTreeMap<String, Option<f64>>| {
+                format!(
+                    "{} of {}",
+                    map.values()
+                        .filter(|v| v.is_some_and(|s| s <= WALK_IN_SECS))
+                        .count(),
+                    map.len()
+                )
+            };
+            let _ = writeln!(
+                r,
+                "| {link} ({:.0} dB SNR) | {} → {} | {} → {} | {} → {} | {} | {} | {} of {} |",
+                c.snr_db,
+                occupied(&c.default_pct),
+                occupied(&c.calibrated_pct),
+                walking(&c.default_pct),
+                walking(&c.calibrated_pct),
+                caught(&c.default_entry_secs),
+                caught(&c.calibrated_entry_secs),
+                span(c.presence_threshold.values().copied().collect(), 3),
+                span(c.link_score.values().map(|v| f64::from(*v)).collect(), 0),
+                c.refused.len(),
+                c.presence_threshold.len() + c.refused.len()
+            );
+        }
+        let _ = writeln!(
+            r,
+            "\nThe default threshold is {}. On the noisy link it reads every frame as present, empty or not, \
+             so its walking and walk-in numbers there mean nothing.",
+            motion_calibration::DEFAULT_PRESENCE_THRESHOLD
+        );
+    }
     let _ = writeln!(r, "\n<details><summary>Per-scenario presence</summary>\n");
     let _ = writeln!(r, "| Scenario | Presence |\n|---|---|");
     for (name, v) in &m.empty_false_presence_pct {
@@ -779,6 +1111,30 @@ fn generator_is_deterministic_and_scenario_set_is_stable() {
 }
 
 #[test]
+fn calibration_segment_records_the_same_room_with_fresh_noise() {
+    let mut sc = scenarios().remove(0);
+    sc.seconds = 2.0;
+    let a = generate(&sc);
+    let b = generate_with(&sc, Some(sc.seed ^ CALIBRATION_STREAM));
+    assert_ne!(a.amplitudes, b.amplitudes, "noise must differ");
+    let profile = |g: &Generated| -> Vec<f64> {
+        (0..g.amplitudes[0].len())
+            .map(|j| g.amplitudes.iter().map(|f| f[j]).sum::<f64>() / g.amplitudes.len() as f64)
+            .collect()
+    };
+    let (pa, pb) = (profile(&a), profile(&b));
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    let (ma, mb) = (mean(&pa), mean(&pb));
+    let cov: f64 = pa.iter().zip(&pb).map(|(x, y)| (x - ma) * (y - mb)).sum();
+    let var = |v: &[f64], m: f64| v.iter().map(|x| (x - m).powi(2)).sum::<f64>();
+    let corr = cov / (var(&pa, ma) * var(&pb, mb)).sqrt();
+    assert!(
+        corr > 0.95,
+        "same room should give the same amplitude profile, corr {corr}"
+    );
+}
+
+#[test]
 #[ignore = "slow in debug builds; CI runs it with --release (scenario-harness.yml)"]
 fn scenario_harness() {
     let mut timing = Timing::default();
@@ -790,7 +1146,8 @@ fn scenario_harness() {
             (sc, out)
         })
         .collect();
-    let metrics = score(&runs);
+    let mut metrics = score(&runs);
+    metrics.calibration = calibration_runs();
     let report = report_markdown(&metrics, &timing);
     eprintln!("{report}");
     if let Ok(path) = std::env::var("RUVIEW_SCENARIO_REPORT") {

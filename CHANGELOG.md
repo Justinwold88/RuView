@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Empty-room motion calibration and a link quality score (plan item
+  1.1).** `POST /api/v1/calibration/motion/start` waits 10 s, records 60 s
+  of the empty room, and gives every node that sent CSI its own presence
+  threshold: 1.3 times the room's 99th-percentile motion score, at least
+  0.015 and at most 0.25. The upper motion levels scale with it. Each node
+  also gets a 0–100 link score from SNR, frame rate, lost frames and
+  empty-room noise. `GET /api/v1/calibration/motion` shows progress and
+  results, `POST /api/v1/calibration/motion/reset` returns to the default
+  threshold, and results persist in `<data-dir>/motion_calibration.json`.
+  Uncalibrated nodes behave exactly as before. SYNTHETIC (scenario harness,
+  now also run on noisy and clean links): calibration takes a noisy link
+  from 5 of 5 empty rooms occupied to 0 of 5 and a clean link from 81–88% of
+  walking frames detected to 100%; on a typical link walking frames drop
+  from 86–100% to 69–88% while all 5 walk-ins are still caught within 2 s.
+  It does not help a person sitting still. Not yet MEASURED on hardware.
+
 - **Docker: operator flags replace the image defaults.** The entrypoint
   added `--source`, `--tick-ms`, `--ui-path`, `--http-port` and `--ws-port`
   before the operator's own flags, so `docker run <image> --source esp32`

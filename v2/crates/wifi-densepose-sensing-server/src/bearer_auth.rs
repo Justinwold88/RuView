@@ -1986,6 +1986,10 @@ mod scope_gate_polarity_tests {
             (Method::DELETE, "/api/v1/recording/r1"),
             (Method::POST, "/api/v1/config/ground-truth"),
             (Method::POST, "/api/v1/calibration/reset"),
+            // Plan item 1.1: these replace or erase per-node presence
+            // thresholds, so a read token must not be able to call them.
+            (Method::POST, "/api/v1/calibration/motion/start"),
+            (Method::POST, "/api/v1/calibration/motion/reset"),
         ] {
             assert_eq!(
                 required_scope_for(&m, p),

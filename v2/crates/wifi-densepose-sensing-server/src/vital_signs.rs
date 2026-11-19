@@ -192,11 +192,18 @@ impl VitalSignDetector {
         let n = amplitude.len() as f64;
         let mean_amp: f64 = amplitude.iter().sum::<f64>() / n;
 
+        // A new subcarrier layout restarts the breathing streams; restart
+        // the mean-amplitude history and cached estimate with them, so the
+        // buffer status and signal-quality fill do not report history that
+        // breathing can no longer use.
+        if self.breathing_streams.push(amplitude, phase) {
+            self.breathing_buffer.clear();
+            self.last_estimate = None;
+        }
         self.breathing_buffer.push_back(mean_amp);
         while self.breathing_buffer.len() > self.breathing_capacity {
             self.breathing_buffer.pop_front();
         }
-        self.breathing_streams.push(amplitude, phase);
 
         // -- Feature 2: Phase variance for heartbeat detection --
         // Cardiac-induced body surface displacement is < 0.5 mm, producing
@@ -492,14 +499,17 @@ impl BreathingStreams {
         self.block_frames = 0;
     }
 
-    fn push(&mut self, amplitude: &[f64], phase: &[f64]) {
+    /// Add one frame. Returns true when the frame's layout differs from the
+    /// stored history, which is then discarded.
+    fn push(&mut self, amplitude: &[f64], phase: &[f64]) -> bool {
         let features = breathing_features(amplitude, phase);
         if features.is_empty() {
-            return;
+            return false;
         }
         // A different subcarrier layout cannot share history with the old one.
         let width = self.samples.front().map_or(self.block_sum.len(), Vec::len);
-        if width != 0 && width != features.len() {
+        let restarted = width != 0 && width != features.len();
+        if restarted {
             self.clear();
         }
         if self.block_sum.len() != features.len() {
@@ -519,6 +529,7 @@ impl BreathingStreams {
                 self.samples.pop_front();
             }
         }
+        restarted
     }
 
     /// Breathing rate and confidence from the stored history.
@@ -1436,9 +1447,31 @@ mod tests {
         }
         assert_eq!(streams.samples.len(), 10);
         assert_eq!(streams.samples[0].len(), 52 + 1 + 52);
-        streams.push(&[10.0; 56], &[0.0; 56]);
+        assert!(streams.push(&[10.0; 56], &[0.0; 56]));
         assert!(streams.samples.is_empty());
         assert_eq!(streams.block_frames, 1);
+        assert!(!streams.push(&[10.0; 56], &[0.0; 56]));
+    }
+
+    #[test]
+    fn a_layout_change_restarts_the_reported_history_too() {
+        let sr = 20.0;
+        let mut det = VitalSignDetector::new(sr);
+        let frame = |n: usize, i: usize| -> Vec<f64> {
+            let t = i as f64 / sr;
+            (0..n)
+                .map(|k| 15.0 + (k as f64 * 0.1).sin() + 2.0 * (2.0 * PI * 0.25 * t).sin())
+                .collect()
+        };
+        let mut vs = VitalSigns::default();
+        for i in 0..300 {
+            vs = det.process_frame(&frame(52, i), &[0.0; 52]);
+        }
+        assert_eq!(det.buffer_status().0, 300);
+        assert!(vs.breathing_rate_bpm.is_some());
+        let vs = det.process_frame(&frame(56, 300), &[0.0; 56]);
+        assert_eq!(det.buffer_status().0, 1);
+        assert!(vs.breathing_rate_bpm.is_none(), "{vs:?}");
     }
 
     #[test]

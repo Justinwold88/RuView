@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Breathing uses per-subcarrier streams, cleaned phase and PCA (plan
+  item 1.2).** The detector no longer averages all subcarriers into one
+  amplitude series. Each subcarrier's log-amplitude (per-frame gain
+  removed), the common gain, and each subcarrier's phase with the
+  per-packet offset and timing slope removed are kept as separate streams,
+  block-averaged to 4 Hz. Once a second the streams with the most
+  breathing-band energy (up to 6, within 75% of the best) are combined by
+  PCA and the spectral peak is taken, preferring half the frequency when it
+  is at least half as strong. The first estimate now needs 10 s of CSI.
+  SYNTHETIC (scenario harness): breathing error 1.03 / 0.77 / 1.53 BPM at
+  -10 / -15 / -20 dB becomes 0.03 / 0.04 / 0.07, and 0.02-0.09 BPM on two
+  further seed sets not used for tuning. Vitals time is 12 us per frame
+  (was 9; MEASURED, dev container). Heart rate is unchanged. Not yet
+  MEASURED on hardware.
+
 - **Empty-room motion calibration and a link quality score (plan item
   1.1).** `POST /api/v1/calibration/motion/start` waits 10 s, records 60 s
   of the empty room, and gives every node that sent CSI its own presence

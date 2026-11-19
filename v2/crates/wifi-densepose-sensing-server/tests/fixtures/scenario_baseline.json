@@ -56,19 +56,19 @@
   },
   "vitals": {
     "-10dB": {
-      "breath_mae_bpm": 1.03,
+      "breath_mae_bpm": 0.03,
       "breath_missing": 0,
       "hr_mae_bpm": 16.49,
       "hr_missing": 0
     },
     "-15dB": {
-      "breath_mae_bpm": 0.77,
+      "breath_mae_bpm": 0.04,
       "breath_missing": 0,
       "hr_mae_bpm": 17.4,
       "hr_missing": 0
     },
     "-20dB": {
-      "breath_mae_bpm": 1.53,
+      "breath_mae_bpm": 0.07,
       "breath_missing": 0,
       "hr_mae_bpm": 15.8,
       "hr_missing": 0
@@ -78,63 +78,63 @@
     "vitals_00": {
       "dyn_db": -10.0,
       "breath_true_bpm": 21.5,
-      "breath_est_bpm": 21.44,
+      "breath_est_bpm": 21.53,
       "heart_true_bpm": 57.2,
       "heart_est_bpm": 58.4
     },
     "vitals_01": {
       "dyn_db": -10.0,
       "breath_true_bpm": 15.4,
-      "breath_est_bpm": 15.48,
+      "breath_est_bpm": 15.42,
       "heart_true_bpm": 60.7,
       "heart_est_bpm": 75.74
     },
     "vitals_02": {
       "dyn_db": -10.0,
       "breath_true_bpm": 9.2,
-      "breath_est_bpm": 9.29,
+      "breath_est_bpm": 9.22,
       "heart_true_bpm": 90.2,
       "heart_est_bpm": 86.01
     },
     "vitals_03": {
       "dyn_db": -10.0,
       "breath_true_bpm": 9.5,
-      "breath_est_bpm": 9.18,
+      "breath_est_bpm": 9.42,
       "heart_true_bpm": 56.8,
       "heart_est_bpm": 103.45
     },
     "vitals_04": {
       "dyn_db": -10.0,
       "breath_true_bpm": 14.2,
-      "breath_est_bpm": 14.04,
+      "breath_est_bpm": 14.19,
       "heart_true_bpm": 89.5,
       "heart_est_bpm": 90.18
     },
     "vitals_05": {
       "dyn_db": -10.0,
       "breath_true_bpm": 16.2,
-      "breath_est_bpm": 9.57,
+      "breath_est_bpm": 16.22,
       "heart_true_bpm": 80.7,
       "heart_est_bpm": 65.97
     },
     "vitals_06": {
       "dyn_db": -10.0,
       "breath_true_bpm": 20.4,
-      "breath_est_bpm": 20.5,
+      "breath_est_bpm": 20.39,
       "heart_true_bpm": 98.1,
       "heart_est_bpm": 93.82
     },
     "vitals_07": {
       "dyn_db": -10.0,
       "breath_true_bpm": 17.9,
-      "breath_est_bpm": 17.13,
+      "breath_est_bpm": 17.92,
       "heart_true_bpm": 99.6,
       "heart_est_bpm": 54.41
     },
     "vitals_08": {
       "dyn_db": -15.0,
       "breath_true_bpm": 11.1,
-      "breath_est_bpm": 11.31,
+      "breath_est_bpm": 11.08,
       "heart_true_bpm": 67.0,
       "heart_est_bpm": 68.27
     },
@@ -148,98 +148,98 @@
     "vitals_10": {
       "dyn_db": -15.0,
       "breath_true_bpm": 22.8,
-      "breath_est_bpm": 24.28,
+      "breath_est_bpm": 22.83,
       "heart_true_bpm": 97.8,
       "heart_est_bpm": 64.97
     },
     "vitals_11": {
       "dyn_db": -15.0,
       "breath_true_bpm": 19.5,
-      "breath_est_bpm": 19.7,
+      "breath_est_bpm": 19.67,
       "heart_true_bpm": 78.8,
       "heart_est_bpm": 54.05
     },
     "vitals_12": {
       "dyn_db": -15.0,
       "breath_true_bpm": 23.2,
-      "breath_est_bpm": 23.01,
+      "breath_est_bpm": 23.21,
       "heart_true_bpm": 83.5,
       "heart_est_bpm": 62.19
     },
     "vitals_13": {
       "dyn_db": -15.0,
       "breath_true_bpm": 10.7,
-      "breath_est_bpm": 7.03,
+      "breath_est_bpm": 10.7,
       "heart_true_bpm": 64.7,
       "heart_est_bpm": 76.87
     },
     "vitals_14": {
       "dyn_db": -15.0,
       "breath_true_bpm": 9.0,
-      "breath_est_bpm": 9.08,
+      "breath_est_bpm": 9.01,
       "heart_true_bpm": 65.7,
       "heart_est_bpm": 59.64
     },
     "vitals_15": {
       "dyn_db": -15.0,
       "breath_true_bpm": 17.1,
-      "breath_est_bpm": 16.84,
+      "breath_est_bpm": 17.09,
       "heart_true_bpm": 74.3,
       "heart_est_bpm": 69.06
     },
     "vitals_16": {
       "dyn_db": -20.0,
       "breath_true_bpm": 17.7,
-      "breath_est_bpm": 17.16,
+      "breath_est_bpm": 17.79,
       "heart_true_bpm": 77.8,
       "heart_est_bpm": 81.48
     },
     "vitals_17": {
       "dyn_db": -20.0,
       "breath_true_bpm": 11.0,
-      "breath_est_bpm": 18.82,
+      "breath_est_bpm": 11.02,
       "heart_true_bpm": 62.9,
       "heart_est_bpm": 98.96
     },
     "vitals_18": {
       "dyn_db": -20.0,
       "breath_true_bpm": 12.0,
-      "breath_est_bpm": 12.0,
+      "breath_est_bpm": 11.98,
       "heart_true_bpm": 82.3,
       "heart_est_bpm": 78.59
     },
     "vitals_19": {
       "dyn_db": -20.0,
       "breath_true_bpm": 16.5,
-      "breath_est_bpm": 19.74,
+      "breath_est_bpm": 16.5,
       "heart_true_bpm": 95.2,
       "heart_est_bpm": 89.26
     },
     "vitals_20": {
       "dyn_db": -20.0,
       "breath_true_bpm": 18.3,
-      "breath_est_bpm": 18.17,
+      "breath_est_bpm": 18.36,
       "heart_true_bpm": 61.1,
       "heart_est_bpm": 74.78
     },
     "vitals_21": {
       "dyn_db": -20.0,
       "breath_true_bpm": 9.9,
-      "breath_est_bpm": 9.75,
+      "breath_est_bpm": 10.14,
       "heart_true_bpm": 71.4,
       "heart_est_bpm": 88.7
     },
     "vitals_22": {
       "dyn_db": -20.0,
       "breath_true_bpm": 21.0,
-      "breath_est_bpm": 20.88,
+      "breath_est_bpm": 21.11,
       "heart_true_bpm": 55.0,
       "heart_est_bpm": 89.57
     },
     "vitals_23": {
       "dyn_db": -20.0,
       "breath_true_bpm": 9.1,
-      "breath_est_bpm": 8.88,
+      "breath_est_bpm": 9.04,
       "heart_true_bpm": 70.5,
       "heart_est_bpm": 81.93
     }
@@ -484,9 +484,9 @@
       "walk_ins_caught": 5,
       "walk_ins_total": 5,
       "breath_mae_bpm": {
-        "-10dB": 1.03,
-        "-15dB": 0.77,
-        "-20dB": 1.53
+        "-10dB": 0.03,
+        "-15dB": 0.04,
+        "-20dB": 0.07
       }
     },
     "1": {
@@ -497,9 +497,9 @@
       "walk_ins_caught": 5,
       "walk_ins_total": 5,
       "breath_mae_bpm": {
-        "-10dB": 0.75,
-        "-15dB": 1.74,
-        "-20dB": 0.93
+        "-10dB": 0.02,
+        "-15dB": 0.05,
+        "-20dB": 0.09
       }
     },
     "2": {
@@ -510,9 +510,9 @@
       "walk_ins_caught": 5,
       "walk_ins_total": 5,
       "breath_mae_bpm": {
-        "-10dB": 0.78,
-        "-15dB": 4.03,
-        "-20dB": 1.39
+        "-10dB": 0.05,
+        "-15dB": 0.02,
+        "-20dB": 0.08
       }
     }
   }

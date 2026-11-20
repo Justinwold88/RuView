@@ -455,6 +455,25 @@ A node only senses people whose movement crosses its path. A node that never see
 
 SYNTHETIC (scenario harness, three links on one room: one sees the person, one never does, one sees them through a noisy link): the ranking chose the link that sees the person (contrast 11.3, against 2.0 and 1.6). Following it held a still person in 5 of 5 rooms with 0 of 5 empty rooms occupied. Fusing all three held 4 of 5, with 1 of 5 empty rooms occupied. This is not yet MEASURED on hardware.
 
+#### Fans and other machines
+
+A running fan chops a reflection at its blade-pass rate. That looks like constant motion, so the room used to read occupied whenever the fan was on. Each ESP32 node now checks its last 5 s of amplitudes once a second for one narrow spectral line between 0.5 and 10 Hz. A person walking spreads energy across that band rather than holding one frequency. When a line stays at one frequency for 10 seconds, the node is flagged as having a fan and removes the fan's steady motion, so a person's extra motion still shows. The flag clears 10 seconds after the line goes.
+
+- A fan whose motion is more than 3.5 times the presence threshold (stronger than a person's reflection) would hide people if removed. It is only reported, and the room keeps reading occupied. Move the fan or the node.
+- `GET /api/v1/links` shows each node's `periodic_interference`: whether a fan is detected, whether it is too strong to remove, and the line's frequency and strength.
+- An oscillating fan's slow head sweep, pets and robot vacuums are not handled yet (plan item 1.5 is v0).
+
+SYNTHETIC results from the scenario harness (5 empty and 5 walk-in-and-sit rooms per fan; before → after):
+
+| Fan | Empty rooms occupied | Still person held | Walk-ins caught within 2 s |
+|---|---|---|---|
+| Typical box fan (−15 dB, 4.2 Hz) | 3 → 0 of 5 | 4 → 5 of 5 | 5 → 5 of 5 |
+| Slow fan (−15 dB, 2.5 Hz) | 3 → 1 of 5 | 4 → 4 of 5 | 5 → 5 of 5 |
+| Weak fan (−20 dB, 2.5 Hz) | 2 → 2 of 5 | 4 → 4 of 5 | 5 → 5 of 5 |
+| Strong fan (−10 dB, 6 Hz) | 5 → 4 of 5 | 0 → 0 of 5 | 5 → 5 of 5 |
+
+None of this is MEASURED on hardware yet.
+
 ### ESP32-C5 (Experimental CSI target)
 
 The C5 profile is headless: 2.4 GHz association, 240 MHz application CPU,

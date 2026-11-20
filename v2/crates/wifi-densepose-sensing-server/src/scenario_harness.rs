@@ -27,6 +27,12 @@
 //! each run once with the default presence threshold and once with the
 //! threshold a 60 s calibration of the same empty room produced.
 //!
+//! The non-human filter (plan item 1.5) is checked with a running fan added
+//! to the empty and walk-in-and-sit rooms of seed set 0: a typical box fan
+//! (the plan's acceptance case), a slower and a weaker one, and one stronger
+//! than the person's reflection, which the filter reports instead of
+//! removing.
+//!
 //! Best-link mode (plan item 1.4) is checked with three links on one room:
 //! link 1 sees the person on a typical link, link 2's path never crosses
 //! them, and link 3 sees them through a noisy link. A five-minute ranking
@@ -212,6 +218,18 @@ struct Scenario {
     /// Standard deviation of the per-packet gain jitter, in dB.
     agc_db: f64,
     snr_db: f64,
+    /// A running fan (plan item 1.5): a reflection whose strength the
+    /// blades chop at a fixed rate. `None` in the 39 standard scenarios.
+    fan: Option<Fan>,
+}
+
+/// A fan's blades chop its reflection on and off at the blade-pass rate.
+#[derive(Clone, Copy)]
+struct Fan {
+    /// Reflection power relative to the static channel, in dB.
+    db: f64,
+    /// Blade-pass rate, Hz.
+    hz: f64,
 }
 
 impl Scenario {
@@ -231,6 +249,7 @@ impl Scenario {
             sto_ns: 25.0,
             agc_db: 0.5,
             snr_db: 25.0,
+            fan: None,
         }
     }
 }
@@ -415,6 +434,15 @@ fn generate_with(sc: &Scenario, impairment_seed: Option<u64>) -> Generated {
                 let (pr, pi) = rotate(a_dyn * flutter, 0.0, -2.0 * PI * f * path / C_LIGHT);
                 re += pr;
                 im += pi;
+            }
+            if let Some(fan) = sc.fan {
+                // Fixed 3 m path; no random draws, so the other scenarios'
+                // random streams are untouched.
+                let a_fan = (p_static * 10f64.powf(fan.db / 10.0)).sqrt();
+                let chop = 0.5 + 0.5 * (2.0 * PI * fan.hz * t + 0.3).sin();
+                let (fr, fi) = rotate(a_fan * chop, 0.0, -2.0 * PI * f * 3.0 / C_LIGHT);
+                re += fr;
+                im += fi;
             }
             let (rr, ri) = rotate(agc * re, agc * im, cpo - 2.0 * PI * k_idx[j] * DF_HZ * sto);
             let qr = quantize(rr + noise_std * rng.normal());
@@ -617,6 +645,44 @@ fn calibration_runs() -> BTreeMap<String, LinkRuns> {
             }
         }
         out.insert(link.name.to_string(), runs);
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Non-human filter (plan item 1.5)
+// ---------------------------------------------------------------------------
+
+fn fan_runs() -> BTreeMap<String, FanResult> {
+    let mut out = BTreeMap::new();
+    for (label, db, hz) in FANS {
+        let mut r = FanResult::default();
+        for base in scenarios()
+            .into_iter()
+            .filter(|s| matches!(s.family, Family::Empty | Family::EnterStill))
+        {
+            let mut sc = base;
+            sc.fan = Some(Fan { db, hz });
+            let o = replay(&sc, &generate(&sc), &mut Timing::default());
+            let at = |secs: f64| (secs * sc.fs).round() as usize;
+            if sc.family == Family::Empty {
+                r.empty_rooms += 1;
+                if share_pct(&o, at(10.0), o.len()) > OCCUPIED_SHARE_PCT {
+                    r.empty_rooms_read_occupied += 1;
+                }
+            } else {
+                r.walk_in_rooms += 1;
+                if share_pct(&o, at(100.0), o.len()) >= HELD_SHARE_PCT
+                    && share_pct(&o, at(10.0), at(T_ENTER_SECS)) <= OCCUPIED_SHARE_PCT
+                {
+                    r.still_person_held_without_false_presence += 1;
+                }
+                if entry_latency_secs(&o, sc.fs).is_some_and(|s| s <= WALK_IN_SECS) {
+                    r.walk_ins_caught += 1;
+                }
+            }
+        }
+        out.insert(label.to_string(), r);
     }
     out
 }
@@ -831,6 +897,24 @@ struct BestLinkMetrics {
     fuse_all: LinkModeResult,
 }
 
+/// Rooms with a running fan (plan item 1.5).
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
+struct FanResult {
+    empty_rooms_read_occupied: usize,
+    empty_rooms: usize,
+    still_person_held_without_false_presence: usize,
+    walk_ins_caught: usize,
+    walk_in_rooms: usize,
+}
+
+/// The fans checked, as (label, reflection dB, blade-pass Hz).
+const FANS: [(&str, f64, f64); 4] = [
+    ("typical box fan", -15.0, 4.2),
+    ("slow fan", -15.0, 2.5),
+    ("weak fan", -20.0, 2.5),
+    ("strong fan", -10.0, 6.0),
+];
+
 #[derive(Serialize, Deserialize)]
 struct Metrics {
     evidence: String,
@@ -854,6 +938,9 @@ struct Metrics {
     /// Best-link mode against fusing all links (plan item 1.4).
     #[serde(default)]
     best_link: Option<BestLinkMetrics>,
+    /// Rooms with a running fan, keyed by fan label (plan item 1.5).
+    #[serde(default)]
+    fans: BTreeMap<String, FanResult>,
 }
 
 fn share_pct(xs: &[FrameOut], from: usize, to: usize) -> f64 {
@@ -901,6 +988,7 @@ fn score(runs: &[(Scenario, Vec<FrameOut>)]) -> Metrics {
         calibration: BTreeMap::new(),
         seed_sets: BTreeMap::new(),
         best_link: None,
+        fans: BTreeMap::new(),
     };
     let mut vitals_errors: BTreeMap<String, (Vec<f64>, usize, Vec<f64>, usize)> = BTreeMap::new();
     let mut chance = Vec::new();
@@ -1145,6 +1233,27 @@ fn regressions(now: &Metrics, base: &Metrics) -> Vec<String> {
             }
         }
     }
+    for (label, b) in &base.fans {
+        let Some(n) = now.fans.get(label) else {
+            bad.push(format!("fan {label}: missing"));
+            continue;
+        };
+        if n.empty_rooms_read_occupied > b.empty_rooms_read_occupied
+            || n.still_person_held_without_false_presence
+                < b.still_person_held_without_false_presence
+            || n.walk_ins_caught < b.walk_ins_caught
+        {
+            bad.push(format!(
+                "fan {label}: empty occupied {} / still held {} / walk-ins {} (baseline {} / {} / {})",
+                n.empty_rooms_read_occupied,
+                n.still_person_held_without_false_presence,
+                n.walk_ins_caught,
+                b.empty_rooms_read_occupied,
+                b.still_person_held_without_false_presence,
+                b.walk_ins_caught
+            ));
+        }
+    }
     if let (Some(b), Some(n)) = (&base.best_link, &now.best_link) {
         if n.chosen != b.chosen {
             bad.push(format!(
@@ -1347,6 +1456,33 @@ fn report_markdown(m: &Metrics, t: &Timing) -> String {
             "| Per-frame time, all sets (MEASURED) | ≤ {G1_FRAME_US:.0} µs | {per_frame:.0} µs{} | {} |",
             " | ".repeat(sets.len().saturating_sub(1)),
             if per_frame <= G1_FRAME_US { "yes" } else { "no" }
+        );
+    }
+    if !m.fans.is_empty() {
+        let _ = writeln!(
+            r,
+            "\n### Rooms with a running fan (plan item 1.5, SYNTHETIC)\n"
+        );
+        let _ = writeln!(
+            r,
+            "| Fan | Reflection / blade rate | Empty rooms occupied | Still person held, no false presence before entry | Walk-ins caught within {WALK_IN_SECS:.0} s |\n|---|---|---|---|---|"
+        );
+        for (label, db, hz) in FANS {
+            let Some(f) = m.fans.get(label) else { continue };
+            let _ = writeln!(
+                r,
+                "| {label} | {db:.0} dB / {hz} Hz | {} of {} | {} of {} | {} of {} |",
+                f.empty_rooms_read_occupied,
+                f.empty_rooms,
+                f.still_person_held_without_false_presence,
+                f.walk_in_rooms,
+                f.walk_ins_caught,
+                f.walk_in_rooms
+            );
+        }
+        let _ = writeln!(
+            r,
+            "\nThe strong fan is stronger than the person's reflection; removing it would hide people, so it is reported and its rooms read occupied."
         );
     }
     if let Some(b) = &m.best_link {
@@ -1589,6 +1725,7 @@ fn scenario_harness() {
     }
     metrics.calibration = calibration_runs();
     metrics.best_link = Some(best_link_runs(0));
+    metrics.fans = fan_runs();
     let report = report_markdown(&metrics, &timing);
     eprintln!("{report}");
     if let Ok(path) = std::env::var("RUVIEW_SCENARIO_REPORT") {

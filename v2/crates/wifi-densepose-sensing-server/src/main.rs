@@ -59,6 +59,7 @@ use wifi_densepose_sensing_server::bootstrap_baseline::{
 use wifi_densepose_sensing_server::best_link::{self, BestLink};
 use wifi_densepose_sensing_server::inference::{fuse_room, NodeInference, RoomInference};
 use wifi_densepose_sensing_server::motion_calibration::{self, MotionCalibration};
+use wifi_densepose_sensing_server::periodic_motion::PeriodicDetector;
 use wifi_densepose_sensing_server::privacy_filter;
 use wifi_densepose_sensing_server::provenance::SourceState;
 
@@ -1174,6 +1175,10 @@ struct NodeState {
     /// Plan item 1.3: keeps a still person present while their breathing
     /// stays periodic.
     still_hold: StillHold,
+    /// Plan item 1.5: flags steady periodic (machine) motion such as a fan.
+    periodic: PeriodicDetector,
+    /// The flagged interferer is too strong to remove without hiding people.
+    fan_masking: bool,
     smoothed_hr: f64,
     smoothed_br: f64,
     smoothed_hr_conf: f64,
@@ -1579,6 +1584,8 @@ impl NodeState {
             baseline_frames: 0,
             presence_threshold: motion_calibration::DEFAULT_PRESENCE_THRESHOLD,
             still_hold: StillHold::default(),
+            periodic: PeriodicDetector::default(),
+            fan_masking: false,
             smoothed_hr: 0.0,
             smoothed_br: 0.0,
             smoothed_hr_conf: 0.0,
@@ -4841,7 +4848,21 @@ fn smooth_and_classify_node(ns: &mut NodeState, raw: &mut ClassificationInfo, ra
             ns.baseline_motion * (1.0 - baseline_alpha) + raw_motion * baseline_alpha;
     }
 
-    let adjusted = (raw_motion - ns.baseline_motion * 0.7).max(0.0);
+    // Plan item 1.5: with a steady periodic interferer (a fan), subtract the
+    // whole baseline, which has absorbed the machine's motion; otherwise keep
+    // 30% of it so a person who stays still is not subtracted away. A fan
+    // strong enough to mask people is left in (and reported).
+    let periodic = ns.periodic.update(&ns.frame_history, fps);
+    ns.fan_masking = periodic
+        && ns.baseline_motion
+            > wifi_densepose_sensing_server::periodic_motion::MASKING_BASELINE_RATIO
+                * ns.presence_threshold;
+    let baseline_share = if periodic && !ns.fan_masking {
+        1.0
+    } else {
+        0.7
+    };
+    let adjusted = (raw_motion - ns.baseline_motion * baseline_share).max(0.0);
 
     ns.smoothed_motion = ns.smoothed_motion * (1.0 - motion_alpha) + adjusted * motion_alpha;
     let sm = ns.smoothed_motion;
@@ -4849,7 +4870,12 @@ fn smooth_and_classify_node(ns: &mut NodeState, raw: &mut ClassificationInfo, ra
     let mut candidate = motion_calibration::classify_level(sm, ns.presence_threshold).to_string();
     let held_still = ns.still_hold.update(
         sm / ns.presence_threshold.max(f64::EPSILON),
-        ns.baseline_frames >= warmup_frames_needed,
+        // While a fan's line is being confirmed its motion is not yet
+        // removed, so it must not start a hold; once flagged it is removed
+        // and a person's motion latches as usual.
+        ns.baseline_frames >= warmup_frames_needed
+            && ns.periodic.ready()
+            && !(ns.periodic.suspected() && !ns.periodic.active()),
         ns.vital_detector.breathing_evidence(),
         ns.vital_detector.estimate_count(),
         fps,
@@ -4939,7 +4965,9 @@ impl StillHold {
     ) -> bool {
         let frames = |secs: f64| (secs * fps).round().max(1.0) as u32;
         let motion_present = motion_ratio > 1.0;
-        if motion_present {
+        // Only motion while latching is allowed counts, so a run that began
+        // during warm-up or while a fan was being confirmed starts over.
+        if motion_present && warmed {
             self.motion_frames = self.motion_frames.saturating_add(1);
             self.motion_peak = self.motion_peak.max(motion_ratio);
         } else {
@@ -5144,8 +5172,26 @@ async fn links_status(State(state): State<SharedState>) -> Json<serde_json::Valu
         .iter()
         .map(|(id, e)| (id.to_string(), serde_json::json!(e)))
         .collect();
+    // Plan item 1.5: steady periodic interference (a fan) per node.
+    let interference: serde_json::Map<String, serde_json::Value> = s
+        .node_states
+        .iter()
+        .map(|(id, n)| {
+            let (ratio, hz) = n.periodic.last_line();
+            (
+                id.to_string(),
+                serde_json::json!({
+                    "fan_detected": n.periodic.active(),
+                    "fan_too_strong": n.fan_masking,
+                    "line_hz": (hz * 100.0).round() / 100.0,
+                    "line_ratio": (ratio * 10.0).round() / 10.0,
+                }),
+            )
+        })
+        .collect();
     Json(serde_json::json!({
         "mode": if b.fuse_all() { "fuse_all" } else { "best_link" },
+        "periodic_interference": interference,
         "selected": b.selected(),
         "next_rerank_secs": b.next_rerank_in(now).map(|d| d.as_secs()),
         "last_ranking": ranking,

@@ -31,6 +31,8 @@ pub mod model_format;
 pub mod motion_calibration;
 pub mod mqtt;
 pub mod path_safety;
+/// Plan item 1.5: flags steady periodic (machine) motion such as a fan.
+pub mod periodic_motion;
 /// ADR-323: fail-closed pose physics integration and raw/refined view selection.
 pub mod pose_physics;
 /// #2094: server-wide `--privacy-mode` filter for REST, WebSocket and recordings.

@@ -150,3 +150,18 @@ receipt from this manifest; completed files are rehashed before reuse. Failed
 partials remain recorded. URLs, revision, byte limits and hashes are fixed by
 the reviewed manifest. Downloading does not decode packets or authorize them
 for training. See `RESEARCH-NEXT.md` for the activity labels and quality rules.
+
+## Public BFI motion test
+
+[PUBLIC-BFI-MOTION.md](PUBLIC-BFI-MOTION.md) freezes a moving-versus-still test
+on the pinned public captures, following ADR-365 strictly. The census covers
+all four partition/view groups; held-out groups are never scored.
+[public_bfi_motion.py](public_bfi_motion.py) needs Wireshark 4.2.2 (`tshark`,
+`editcap`) and runs in the manual `public-bfi-motion.yml` workflow. Only
+aggregate numbers leave the runner.
+
+```bash
+python tools/bfi_learning/download_public_bfi.py --include-heldout --output /private/bfi
+python tools/bfi_learning/public_bfi_motion.py --data /private/bfi \
+  --report report.md --json report.json
+```

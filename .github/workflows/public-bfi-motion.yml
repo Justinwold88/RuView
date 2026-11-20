@@ -1,0 +1,66 @@
+name: Public BFI Motion Test
+
+# Manual only. Downloads the pinned public CSI-BFI-HAR BFI captures (GPL-3.0
+# dataset) onto the runner, runs the ADR-365 census and decoder oracle, and
+# scores moving vs still only if the benchmark is admitted. Protocol:
+# tools/bfi_learning/PUBLIC-BFI-MOTION.md. Data never leaves the runner;
+# only aggregate numbers are uploaded.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-bfi-motion
+  cancel-in-progress: false
+
+jobs:
+  census-and-score:
+    name: ADR-365 census and moving-vs-still score
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - name: Install numpy
+        run: python -m pip install numpy==2.4.2
+      - name: Install Wireshark (tshark, editcap) and require exactly 4.2.2
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tshark
+          tshark --version | head -1 | tee /dev/stderr | grep -Eq '^TShark \(Wireshark\) 4\.2\.2 '
+          editcap --version | head -1 | tee /dev/stderr | grep -Eq '^Editcap \(Wireshark\) 4\.2\.2 '
+      - name: Unit tests (SYNTHETIC, including tshark and editcap)
+        working-directory: tools/bfi_learning
+        run: python -B -m unittest test_public_bfi_motion -v
+      - name: Download pinned data, all four groups (stays on the runner)
+        run: python -B tools/bfi_learning/download_public_bfi.py --include-heldout --output "$RUNNER_TEMP/public-bfi"
+      - name: Census, decoder oracle and score
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/report"
+          python -B tools/bfi_learning/public_bfi_motion.py --data "$RUNNER_TEMP/public-bfi" \
+            --report "$RUNNER_TEMP/report/public-bfi-motion.md" \
+            --json "$RUNNER_TEMP/report/public-bfi-motion.json" \
+            --commit "$GITHUB_SHA" --run-url "$RUN_URL"
+          cat "$RUNNER_TEMP/report/public-bfi-motion.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the download receipt (paths, hashes and statuses only)
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/report"
+          if [ -f "$RUNNER_TEMP/public-bfi/download-receipt.json" ]; then
+            cp "$RUNNER_TEMP/public-bfi/download-receipt.json" "$RUNNER_TEMP/report/"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: public-bfi-motion-report
+          path: ${{ runner.temp }}/report/
+          if-no-files-found: warn
+          retention-days: 90

@@ -23,6 +23,12 @@
 //! Results are stored in a [`VitalSignStore`] with configurable
 //! retention for historical analysis.
 //!
+//! [`VitalSignDetector`] ([`detector`]) is the detector the RuView sensing
+//! server runs: per-subcarrier breathing streams combined by PCA (plan item
+//! 1.2), FFT heart rate, spectra recomputed once per second, and the
+//! breathing evidence behind the server's still-person hold (plan item 1.3).
+//! The server re-exports it as `wifi_densepose_sensing_server::vital_signs`.
+//!
 //! Ground-truth evaluation ([`groundtruth`], ADR-293) ingests a
 //! reference-device series (CSV export), time-aligns it against a store
 //! session, and produces evidence-graded agreement statistics
@@ -73,6 +79,7 @@
 
 pub mod anomaly;
 pub mod breathing;
+pub mod detector;
 pub mod groundtruth;
 pub mod heartrate;
 pub mod preprocessor;
@@ -81,6 +88,7 @@ pub mod types;
 
 pub use anomaly::{AnomalyAlert, VitalAnomalyDetector};
 pub use breathing::BreathingExtractor;
+pub use detector::{VitalSignDetector, VitalSigns};
 pub use groundtruth::{
     align, evaluate_session, AgreementConfig, AgreementReport, AlignmentConfig, AlignmentResult,
     DistanceBand, DriftFit, EstimateSeries, EvidenceGrade, GradedAgreementReport,

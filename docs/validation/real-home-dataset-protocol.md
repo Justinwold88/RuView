@@ -47,6 +47,41 @@ Otherwise the result is "insufficient data", with what is missing.
 - at least 120 guarded `still` minutes inside the sensing area
 - at least 30 `walk_in` events with a reference time
 
+### Scoring details (frozen)
+
+- **Room verdict.** The scored verdict is the room's `classification.presence`
+  from the output log.
+  - Each logged value holds until the next one.
+  - A gap of more than 5 s between logged updates counts as no output. That
+    covers a stopped, stale or unreachable server.
+  - No-output time is removed from every denominator and reported as coverage.
+- **False occupied event.** Within a guarded `empty_home` piece, an event
+  starts in either of two cases:
+  - the verdict is already present when the piece starts
+  - the verdict turns from absent to present
+
+  A present spell that starts less than 60 s after the previous one ended, in
+  the same piece, belongs to the same event.
+- **Still held.** Present time divided by guarded `still` time, after removing
+  no-output time.
+- **Walk-in latency.** The window runs from 2 s before the reference to 10 s
+  after it.
+  - **Already present:** the verdict is present 2 s before the reference. This
+    is a false positive. It is reported separately and fails the 2 s target.
+  - **Otherwise:** the latency is the first absent-to-present change in the
+    window, minus the reference. It can be negative, down to −2 s, since a
+    button press can lag.
+  - **Missed:** there is no change in the window.
+- **Breathing (Phase 1 check).**
+  - Over guarded `still` and `sleep` pieces, compare each logged
+    `breathing_bpm` with the mmWave breathing rate in the fused vitals packets
+    of the tee capture: magic `0xC5110004`, float at bytes 32–35, used only
+    when flags bit 3 is set and the rate is 6–40 BPM.
+  - Use the latest mmWave value from the last 5 s. Report the median absolute
+    error.
+  - The mmWave module is a reference, not ground truth. Its own accuracy is
+    CLAIMED by its maker.
+
 ## Consent and privacy (frozen)
 
 CSI recordings are person data. The repository rules forbid committing them,
@@ -106,9 +141,20 @@ minutes of runtime log (item 2.1). A build or a simulator is not evidence.
    bytes unchanged). Each file is closed with its SHA-256 and per-type counts in
    `manifest.jsonl`. It prints packet rates every 10 minutes, so a dead node is
    noticed on the same day.
-3. **Calibrate.** Run the empty-room calibration (item 1.1) on day 1, and again
+3. **Log the live verdict.** Run the output logger for the whole study too. It
+   polls `GET /api/v1/sensing/latest` every 0.25 s and `GET /api/v1/links`
+   every minute, and keeps only the room verdict, each node's level, the
+   followed link and the breathing estimate:
+
+   ```bash
+   python tools/real_home/log_outputs.py --url http://127.0.0.1:8080 --output /private/ruview-home
+   ```
+
+   G2 is scored on this log: it is what Home Assistant saw. The raw tee capture
+   allows later replays with other settings.
+4. **Calibrate.** Run the empty-room calibration (item 1.1) on day 1, and again
    after anything in the setup sheet changes.
-4. **Duration.** Record for at least 7 consecutive days, around the clock.
+5. **Duration.** Record for at least 7 consecutive days, around the clock.
    The host clock must be NTP-synchronised. The recorder logs clock jumps above
    2 s.
 

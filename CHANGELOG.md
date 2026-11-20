@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `tools/real_home/record_tee.py` records the server's loopback UDP tee to
   hourly nanosecond pcap files with a SHA-256 manifest.
+  `tools/real_home/log_outputs.py` logs the live room verdict that G2 is
+  scored on.
   `tools/real_home/labels.py` appends label events and checks them: pairing,
   overlaps, per-day totals, the split and the minimum test data. The
   protocol needs the study owner's sign-off before recording starts.

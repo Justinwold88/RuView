@@ -8,6 +8,11 @@ Tools for the [real-home dataset protocol](../../docs/validation/real-home-datas
   addresses are stored. Each closed file's SHA-256 and per-type counts go in
   `manifest.jsonl`. A `.pcap.partial` file means the recorder stopped without
   closing it; its records are valid up to the last flush (at most 1 s lost).
+- `log_outputs.py` logs the server's live room verdict for scoring. It polls
+  `/api/v1/sensing/latest` every 0.25 s and `/api/v1/links` every minute,
+  keeping only the room verdict, node levels, the followed link and the
+  breathing estimate. It writes hourly JSON lines with a SHA-256 manifest and
+  logs outages once each.
 - `labels.py mark` appends a timestamped label event. `labels.py check`
   validates the label file, totals each protocol day, applies the train/test
   split and tests the minimum test data. With `--intervals` it writes the
@@ -16,6 +21,7 @@ Tools for the [real-home dataset protocol](../../docs/validation/real-home-datas
 ```bash
 # Server: add --udp-tee 127.0.0.1:5600 to the usual command line
 python tools/real_home/record_tee.py --listen 127.0.0.1:5600 --output /private/ruview-home
+python tools/real_home/log_outputs.py --url http://127.0.0.1:8080 --output /private/ruview-home
 
 python tools/real_home/labels.py mark home_empty_start --labels /private/ruview-home/labels.csv
 python tools/real_home/labels.py mark walk_in --source door --labels /private/ruview-home/labels.csv

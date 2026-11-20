@@ -210,8 +210,11 @@ def summarize(rows, zone, in_area_spots=None):
                 else:
                     totals["excluded_hours"] += seconds / 3600
                 if state != "exclude":
-                    scoring.append({"room": interval["room"], "state": state, "spot": interval["spot"],
-                                    "day": number, "start": format_time(cursor), "end": format_time(stop)})
+                    item = {"room": interval["room"], "state": state, "spot": interval["spot"],
+                            "day": number, "start": format_time(cursor), "end": format_time(stop)}
+                    if state == "still":
+                        item["in_area"] = inside
+                    scoring.append(item)
                 cursor = stop
     scored_walk_ins = []
     occupied = [i for i in intervals if i["state"] in ("home_empty", "still", "sleep", "pet_only")]

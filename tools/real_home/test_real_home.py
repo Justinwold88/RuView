@@ -206,7 +206,8 @@ class LabelTests(unittest.TestCase):
     def test_spots_outside_the_area(self):
         rows = [(at(1, 18), "still_start", "S2"), (at(1, 18, 20), "still_end", "S2"),
                 (at(1, 19), "still_start", "S3-out"), (at(1, 19, 20), "still_end", "S3-out")]
-        report, _ = self.summary(rows, spots={"S1"})
+        report, scoring = self.summary(rows, spots={"S1"})
+        self.assertEqual([i["in_area"] for i in scoring["intervals"]], [False, False])
         self.assertEqual((report["days"]["1"]["still_minutes_in_area"], report["days"]["1"]["still_minutes_outside"]),
                          (0.0, 38.0))
         report, _ = self.summary(rows)

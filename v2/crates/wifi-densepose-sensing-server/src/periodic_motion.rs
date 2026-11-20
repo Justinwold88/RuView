@@ -132,10 +132,12 @@ impl PeriodicDetector {
             return self.active;
         }
         self.frames_since_check = 0;
-        let line = spectral_line(history, fps);
-        if line.is_some() {
+        // A check counts once a full window exists, line or not: flat data
+        // (no spectrum to speak of) must not keep the detector unready.
+        if history.len() >= WINDOW_FRAMES {
             self.checks = self.checks.saturating_add(1);
         }
+        let line = spectral_line(history, fps);
         match line {
             Some((ratio, hz, bin)) if ratio >= line_ratio => {
                 self.last_ratio = ratio;
@@ -265,6 +267,20 @@ mod tests {
         }
         let t = cleared_at.expect("cleared");
         assert!((5.0..20.0).contains(&t), "cleared at {t} s");
+    }
+
+    #[test]
+    fn flat_data_still_becomes_ready() {
+        let mut det = PeriodicDetector::default();
+        // A full window from which no spectrum can be taken (frames without
+        // subcarriers).
+        let hist: VecDeque<Vec<f64>> = (0..WINDOW_FRAMES).map(|_| Vec::new()).collect();
+        assert!(spectral_line(&hist, FPS).is_none());
+        for _ in 0..(5.0 * FPS) as usize {
+            det.update(&hist, FPS);
+        }
+        assert!(det.ready());
+        assert!(!det.active());
     }
 
     #[test]

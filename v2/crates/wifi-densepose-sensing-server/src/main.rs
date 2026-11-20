@@ -4938,11 +4938,16 @@ impl StillHold {
         if estimate_count != self.last_estimate {
             // A fresh, once-per-second evidence value.
             self.last_estimate = estimate_count;
-            if let Some(e) = evidence {
-                self.recent_evidence.push_back(e);
-                while self.recent_evidence.len() > STILL_KEEP_MEAN_SECS {
-                    self.recent_evidence.pop_front();
+            match evidence {
+                Some(e) => {
+                    self.recent_evidence.push_back(e);
+                    while self.recent_evidence.len() > STILL_KEEP_MEAN_SECS {
+                        self.recent_evidence.pop_front();
+                    }
                 }
+                // No evidence (detector restarted after a layout or clock
+                // change): old values must not keep presence alive.
+                None => self.recent_evidence.clear(),
             }
             let mean = (self.recent_evidence.len() == STILL_KEEP_MEAN_SECS).then(|| {
                 self.recent_evidence
@@ -5040,6 +5045,18 @@ mod still_hold_tests {
         // Once the room is empty (evidence about 6) presence clears.
         run(&mut h, 60.0, 0.5, Some(6.0), &mut seq);
         assert_eq!(run(&mut h, 10.0, 0.5, Some(6.0), &mut seq), 0.0);
+    }
+
+    #[test]
+    fn a_detector_restart_drops_the_old_evidence() {
+        let mut seq = 0;
+        let mut h = StillHold::default();
+        run(&mut h, 3.0, 3.0, None, &mut seq);
+        run(&mut h, 60.0, 0.5, Some(13.0), &mut seq);
+        // Evidence disappears (e.g. new subcarrier layout): the 30 s mean of
+        // the old values must not hold presence for long.
+        run(&mut h, STILL_KEEP_SECS + 1.0, 0.5, None, &mut seq);
+        assert_eq!(run(&mut h, 5.0, 0.5, None, &mut seq), 0.0);
     }
 
     #[test]

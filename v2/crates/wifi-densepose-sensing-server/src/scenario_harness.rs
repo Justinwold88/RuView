@@ -524,7 +524,7 @@ fn replay_with_threshold(
             ns.frame_history.pop_front();
         }
         let t0 = Instant::now();
-        let (_features, mut cls, _br_hz, _sub_var, raw_motion) =
+        let (_features, mut cls, _sub_var, raw_motion) =
             extract_features_from_frame(&frame, &ns.frame_history, sc.fs);
         smooth_and_classify_node(&mut ns, &mut cls, raw_motion);
         let features_us = t0.elapsed().as_secs_f64() * 1e6;

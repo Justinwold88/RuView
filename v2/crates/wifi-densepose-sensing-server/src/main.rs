@@ -4154,7 +4154,8 @@ mod esp32_frame_structure_tests {
 /// - `subcarrier_variances`: per-subcarrier variance computed from the frame history.
 ///   High-variance subcarriers indicate spatial directions where the signal is disrupted.
 /// - `motion_score`: overall motion intensity [0, 1].
-/// - `breathing_rate_hz`: estimated breathing rate in Hz; if > 0, adds a breathing ring.
+/// - `breathing_rate_hz`: the vital-sign detector's breathing rate in Hz; above 0.05 Hz
+///   it adds a breathing ring.
 /// - `signal_quality`: overall quality metric [0, 1] modulates field brightness.
 ///
 /// The field grid is 20×20 cells representing a top-down view of the room.
@@ -4249,94 +4250,19 @@ fn generate_signal_field(
     }
 }
 
-// ── Feature extraction from ESP32 frame ──────────────────────────────────────
-
-/// Estimate breathing rate in Hz from the amplitude time series stored in `frame_history`.
+/// Breathing rate for the signal field's breathing ring, in Hz (0 = no ring).
 ///
-/// Approach:
-/// 1. Build a scalar time series by computing the mean amplitude of each historical frame.
-/// 2. Run a peak-detection pass: count rising-edge zero-crossings of the de-meaned signal.
-/// 3. Convert the crossing rate to Hz, clipped to the physiological range 0.1–0.5 Hz
-///    (12–30 breaths/min).
-///
-/// For accuracy the function additionally applies a simple 3-tap Goertzel-style power
-/// estimate at evenly-spaced candidate frequencies in the breathing band and returns
-/// the candidate with the highest energy.
-fn estimate_breathing_rate_hz(frame_history: &VecDeque<Vec<f64>>, sample_rate_hz: f64) -> f64 {
-    let n = frame_history.len();
-    if n < 6 {
-        return 0.0;
-    }
-
-    // Build scalar time series: mean amplitude per frame.
-    let series: Vec<f64> = frame_history
-        .iter()
-        .map(|amps| {
-            if amps.is_empty() {
-                0.0
-            } else {
-                amps.iter().sum::<f64>() / amps.len() as f64
-            }
-        })
-        .collect();
-
-    let mean_s = series.iter().sum::<f64>() / n as f64;
-    // De-mean.
-    let detrended: Vec<f64> = series.iter().map(|x| x - mean_s).collect();
-
-    // Goertzel power at candidate frequencies in the breathing band [0.1, 0.5] Hz.
-    // We evaluate 9 candidate frequencies uniformly spaced in that band.
-    let n_candidates = 9usize;
-    let f_low = 0.1f64;
-    let f_high = 0.5f64;
-    let mut best_freq = 0.0f64;
-    let mut best_power = 0.0f64;
-
-    for i in 0..n_candidates {
-        let freq = f_low + (f_high - f_low) * i as f64 / (n_candidates - 1).max(1) as f64;
-        let omega = 2.0 * std::f64::consts::PI * freq / sample_rate_hz;
-        let coeff = 2.0 * omega.cos();
-        let mut s_prev2 = 0.0f64;
-        let mut s_prev1 = 0.0f64;
-        for &x in &detrended {
-            let s = x + coeff * s_prev1 - s_prev2;
-            s_prev2 = s_prev1;
-            s_prev1 = s;
-        }
-        // Goertzel magnitude squared.
-        let power = s_prev2 * s_prev2 + s_prev1 * s_prev1 - coeff * s_prev1 * s_prev2;
-        if power > best_power {
-            best_power = power;
-            best_freq = freq;
-        }
-    }
-
-    // Only report a breathing rate if the Goertzel energy is meaningfully above noise.
-    // Threshold: power must exceed 10× the average power across all candidates.
-    let avg_power = {
-        let mut total = 0.0f64;
-        for i in 0..n_candidates {
-            let freq = f_low + (f_high - f_low) * i as f64 / (n_candidates - 1).max(1) as f64;
-            let omega = 2.0 * std::f64::consts::PI * freq / sample_rate_hz;
-            let coeff = 2.0 * omega.cos();
-            let mut s_prev2 = 0.0f64;
-            let mut s_prev1 = 0.0f64;
-            for &x in &detrended {
-                let s = x + coeff * s_prev1 - s_prev2;
-                s_prev2 = s_prev1;
-                s_prev1 = s;
-            }
-            total += s_prev2 * s_prev2 + s_prev1 * s_prev1 - coeff * s_prev1 * s_prev2;
-        }
-        total / n_candidates as f64
-    };
-
-    if best_power > avg_power * 3.0 {
-        best_freq.clamp(f_low, f_high)
-    } else {
-        0.0
-    }
+/// The ring follows the vital-sign detector, the server's one breathing
+/// estimator (plan item 4.1). It used to come from a separate 9-frequency
+/// Goertzel estimate on the mean amplitude.
+fn signal_field_breathing_hz(vitals: &VitalSigns) -> f64 {
+    vitals
+        .breathing_rate_bpm
+        .filter(|bpm| bpm.is_finite() && *bpm > 0.0)
+        .map_or(0.0, |bpm| bpm / 60.0)
 }
+
+// ── Feature extraction from ESP32 frame ──────────────────────────────────────
 
 /// Compute per-subcarrier variance across the sliding window of `frame_history`.
 ///
@@ -4417,17 +4343,18 @@ fn compute_subcarrier_variances(frame_history: &VecDeque<Vec<f64>>, n_sub: usize
 /// - **Motion detection**: uses frame-to-frame temporal difference (mean L2 change
 ///   between the current frame and the previous frame) normalised by signal amplitude,
 ///   so that actual changes are detected rather than just a threshold on the current frame.
-/// - **Breathing rate**: estimated via Goertzel filter bank on the 0.1–0.5 Hz band of
-///   the amplitude time series.
 /// - **Signal quality**: based on SNR estimate (RSSI – noise floor) and subcarrier
 ///   variance stability.
 ///
-/// Returns (features, raw_classification, breathing_rate_hz, sub_variances, raw_motion_score).
+/// Breathing rate is not estimated here. The vital-sign detector
+/// (`vital_signs.rs`) is the server's one breathing estimator (plan item 4.1).
+///
+/// Returns (features, raw_classification, sub_variances, raw_motion_score).
 fn extract_features_from_frame(
     frame: &Esp32Frame,
     frame_history: &VecDeque<Vec<f64>>,
     sample_rate_hz: f64,
-) -> (FeatureInfo, ClassificationInfo, f64, Vec<f64>, f64) {
+) -> (FeatureInfo, ClassificationInfo, Vec<f64>, f64) {
     let n_sub = frame.amplitudes.len().max(1);
     let n = n_sub as f64;
     let mean_rssi = frame.rssi as f64;
@@ -4561,9 +4488,6 @@ fn extract_features_from_frame(
         (1.0 - (temporal_variance / (mean_amp * mean_amp + 1e-9)).clamp(0.0, 1.0)).max(0.0);
     let signal_quality = (snr_quality * 0.6 + stability * 0.4).clamp(0.0, 1.0);
 
-    // ── Breathing rate estimation ──
-    let breathing_rate_hz = estimate_breathing_rate_hz(frame_history, sample_rate_hz);
-
     let features = FeatureInfo {
         mean_rssi,
         variance,
@@ -4582,13 +4506,7 @@ fn extract_features_from_frame(
         confidence: (0.4 + signal_quality * 0.3 + motion_score * 0.3).clamp(0.0, 1.0),
     };
 
-    (
-        features,
-        raw_classification,
-        breathing_rate_hz,
-        sub_variances,
-        motion_score,
-    )
+    (features, raw_classification, sub_variances, motion_score)
 }
 
 /// Simple threshold classification (no smoothing) — used as the "raw" input.
@@ -4604,16 +4522,52 @@ fn extract_wifi_features_from_frame(
     frame: &Esp32Frame,
     history: &VecDeque<Vec<f64>>,
     sample_rate_hz: f64,
-) -> (FeatureInfo, ClassificationInfo, f64, Vec<f64>, f64) {
-    let (features, mut classification, breathing, variances, score) =
+) -> (FeatureInfo, ClassificationInfo, Vec<f64>, f64) {
+    let (features, mut classification, variances, score) =
         extract_features_from_frame(frame, history, sample_rate_hz);
     if frame.amplitudes.len() != 1 {
-        return (features, classification, breathing, variances, score);
+        return (features, classification, variances, score);
     }
     let score = rssi_motion::motion_score(history, sample_rate_hz);
     classification.motion_level = raw_classify(score);
     classification.presence = score > 0.04;
-    (features, classification, breathing, variances, score)
+    (features, classification, variances, score)
+}
+
+#[cfg(test)]
+mod signal_field_breathing_tests {
+    use super::*;
+
+    fn vitals(breathing_rate_bpm: Option<f64>) -> VitalSigns {
+        VitalSigns {
+            breathing_rate_bpm,
+            ..VitalSigns::default()
+        }
+    }
+
+    /// Plan item 4.1: the breathing ring follows the vital-sign detector,
+    /// the server's only breathing estimator.
+    #[test]
+    fn ring_follows_the_vital_sign_detector() {
+        assert_eq!(signal_field_breathing_hz(&vitals(Some(15.0))), 0.25);
+        assert_eq!(signal_field_breathing_hz(&vitals(None)), 0.0);
+        assert_eq!(signal_field_breathing_hz(&vitals(Some(f64::NAN))), 0.0);
+        assert_eq!(signal_field_breathing_hz(&vitals(Some(-3.0))), 0.0);
+
+        let variances = vec![0.0; 52];
+        let without = generate_signal_field(-50.0, 0.05, 0.0, 0.5, &variances);
+        let with = generate_signal_field(
+            -50.0,
+            0.05,
+            signal_field_breathing_hz(&vitals(Some(15.0))),
+            0.5,
+            &variances,
+        );
+        assert_ne!(
+            with.values, without.values,
+            "a breathing rate must draw the ring"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -4642,7 +4596,7 @@ mod static_room_motion_tests {
             phases: vec![0.0; amplitudes.len()],
         };
         let history: VecDeque<Vec<f64>> = std::iter::repeat(amplitudes).take(20).collect();
-        let (features, classification, _, _, motion_score) =
+        let (features, classification, _, motion_score) =
             extract_features_from_frame(&frame, &history, 20.0);
         assert!(features.motion_band_power > 25.0, "the fixture must have a strong room shape");
         assert!(features.change_points > 0);
@@ -4694,7 +4648,7 @@ mod single_rssi_regression_tests {
                     if state.frame_history.len() > FRAME_HISTORY_CAPACITY {
                         state.frame_history.pop_front();
                     }
-                    let (_, mut c, _, _, score) =
+                    let (_, mut c, _, score) =
                         extract_wifi_features_from_frame(&f, &state.frame_history, 2.0);
                     smooth_and_classify(&mut state, &mut c, score);
                     assert_eq!(c.presence, c.motion_level != "absent");
@@ -4730,7 +4684,7 @@ mod single_rssi_regression_tests {
         let history = VecDeque::from([vec![1.0; 8], f.amplitudes.clone()]);
         let csi = extract_features_from_frame(&f, &history, 2.0);
         let wifi = extract_wifi_features_from_frame(&f, &history, 2.0);
-        assert_eq!(wifi.4, csi.4);
+        assert_eq!(wifi.3, csi.3);
         assert_eq!(wifi.1.motion_level, csi.1.motion_level);
         assert_eq!(wifi.0.variance, csi.0.variance);
     }
@@ -5854,7 +5808,7 @@ async fn wifi_task(state: SharedState, tick_ms: u64) {
             s_write_pre.frame_history.pop_front();
         }
         let sample_rate_hz = 1000.0 / tick_ms as f64;
-        let (features, mut classification, breathing_rate_hz, sub_variances, raw_motion) =
+        let (features, mut classification, sub_variances, raw_motion) =
             extract_wifi_features_from_frame(&frame, &s_write_pre.frame_history, sample_rate_hz);
         smooth_and_classify(&mut s_write_pre, &mut classification, raw_motion);
         adaptive_override(&s_write_pre, &features, &mut classification);
@@ -5944,7 +5898,7 @@ async fn wifi_task(state: SharedState, tick_ms: u64) {
             signal_field: generate_signal_field(
                 first_rssi,
                 motion_score,
-                breathing_rate_hz,
+                signal_field_breathing_hz(&vitals),
                 feat_variance.min(1.0),
                 &sub_variances,
             ),
@@ -6047,7 +6001,7 @@ async fn windows_wifi_fallback_tick(state: &SharedState, seq: u32) {
         s.frame_history.pop_front();
     }
     let sample_rate_hz = 2.0_f64; // fallback tick ~ 500 ms => 2 Hz
-    let (features, mut classification, breathing_rate_hz, sub_variances, raw_motion) =
+    let (features, mut classification, sub_variances, raw_motion) =
         extract_wifi_features_from_frame(&frame, &s.frame_history, sample_rate_hz);
     smooth_and_classify(&mut s, &mut classification, raw_motion);
     adaptive_override(&s, &features, &mut classification);
@@ -6114,7 +6068,7 @@ async fn windows_wifi_fallback_tick(state: &SharedState, seq: u32) {
         signal_field: generate_signal_field(
             rssi_dbm,
             motion_score,
-            breathing_rate_hz,
+            signal_field_breathing_hz(&vitals),
             feat_variance.min(1.0),
             &sub_variances,
         ),
@@ -14262,13 +14216,8 @@ async fn udp_receiver_task(
                     }
 
                     let sample_rate_hz = ns.effective_sample_rate_hz();
-                    let (
-                        features,
-                        mut classification,
-                        breathing_rate_hz,
-                        sub_variances,
-                        raw_motion,
-                    ) = extract_features_from_frame(&frame, &ns.frame_history, sample_rate_hz);
+                    let (features, mut classification, sub_variances, raw_motion) =
+                        extract_features_from_frame(&frame, &ns.frame_history, sample_rate_hz);
                     smooth_and_classify_node(ns, &mut classification, raw_motion);
                     let calibration_sample = motion_calibration_sample(ns, &frame);
                     let smoothed_motion = ns.smoothed_motion;
@@ -14498,7 +14447,7 @@ async fn udp_receiver_task(
                         signal_field: generate_signal_field(
                             fused_features.mean_rssi,
                             motion_score,
-                            breathing_rate_hz,
+                            signal_field_breathing_hz(&vitals),
                             fused_features.variance.min(1.0),
                             &sub_variances,
                         ),
@@ -14673,7 +14622,7 @@ async fn simulated_data_task(state: SharedState, tick_ms: u64) {
         }
 
         let sample_rate_hz = 1000.0 / tick_ms as f64;
-        let (features, mut classification, breathing_rate_hz, sub_variances, raw_motion) =
+        let (features, mut classification, sub_variances, raw_motion) =
             extract_features_from_frame(&frame, &s.frame_history, sample_rate_hz);
         smooth_and_classify(&mut s, &mut classification, raw_motion);
         adaptive_override(&s, &features, &mut classification);
@@ -14738,7 +14687,7 @@ async fn simulated_data_task(state: SharedState, tick_ms: u64) {
             signal_field: generate_signal_field(
                 features.mean_rssi,
                 motion_score,
-                breathing_rate_hz,
+                signal_field_breathing_hz(&vitals),
                 features.variance.min(1.0),
                 &sub_variances,
             ),

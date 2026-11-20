@@ -32,6 +32,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - SYNTHETIC (scenario harness, three links fused): still person held 4 of
     5 → 5 of 5, empty rooms occupied 1 of 5 → 1 of 5.
 
+- **One breathing estimator in the server (plan item 4.1).** The sensing
+  server estimated breathing twice. The vital-sign detector
+  (`vital_signs.rs`) feeds the published breathing rate and Home Assistant.
+  A separate 9-frequency Goertzel estimate on the mean amplitude (copied in
+  `main.rs` and `csi.rs`) fed only the signal field's breathing ring. The
+  Goertzel copy is gone. The ring now shows when the vital-sign detector
+  reports a breathing rate.
+  - SYNTHETIC (scenario harness): every accuracy figure in the report, for
+    every scenario and seed set, is identical before and after. Only the
+    timings changed.
+  - MEASURED (dev container, one run each): feature extraction 40 → 36 µs
+    per frame; total 87 → 84 µs.
+  - The `/ws/sensing` signal field can differ, because the ring now follows
+    the detector rather than the Goertzel test. The harness does not score
+    the ring.
+
 - **Real-home dataset protocol and tools (plan item 2.3, PROPOSED).**
   `docs/validation/real-home-dataset-protocol.md` defines how the 7-day
   labelled home recordings behind Gate G2 are made:

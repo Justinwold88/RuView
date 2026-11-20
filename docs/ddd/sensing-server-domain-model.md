@@ -31,8 +31,8 @@ All code paths shown are relative to `v2/crates/wifi-densepose-` unless otherwis
 | **LoRA Profile** | A lightweight adapter applied on top of a base RVF model for environment-specific fine-tuning without retraining the full model |
 | **Recording Session** | A period during which CSI frames are appended to a `.csi.jsonl` file, identified by a session ID and optional activity label |
 | **Training Run** | A background task that loads recorded CSI data, extracts features, trains a regularised linear model, and exports a `.rvf` container |
-| **Frame History** | A circular buffer of the last 100 CSI amplitude vectors used for temporal analysis (sliding-window variance, Goertzel breathing estimation) |
-| **Goertzel Filter** | A frequency-domain estimator applied to the frame history to detect breathing rate (0.1--0.5 Hz) via a 9-candidate filter bank |
+| **Frame History** | A circular buffer of the last 100 CSI amplitude vectors used for temporal analysis (sliding-window variance, motion score) |
+| **Vital Sign Detector** | The server's one breathing and heart-rate estimator (`vital_signs.rs`). Its breathing rate is also what draws the signal field's breathing ring |
 | **Signal Field** | A 20x1x20 grid of interpolated signal intensity values rendered as Gaussian splats in the UI |
 | **Pose Source** | Whether pose keypoints are `illustrative` (a template skeleton placed from the motion level, not measured; named `signal_derived` before the rename, still available with `--legacy-pose-source-name` for one release) or `model_inference` (from a loaded RVF model) |
 | **Progressive Loader** | A two-layer model loading strategy: Layer A loads instantly for basic inference, Layer B loads in background for full accuracy |
@@ -74,7 +74,7 @@ All code paths shown are relative to `v2/crates/wifi-densepose-` unless otherwis
 |          |  Feature          |                             |
 |          |  Extractor        |                             |
 |          |  (Welford stats,  |                             |
-|          |   Goertzel FFT,   |                             |
+|          |   band power,     |                             |
 |          |   L2 motion)      |                             |
 |          +--------+----------+                             |
 |                   v                                        |
@@ -192,13 +192,13 @@ pub enum DataSource {
 ```
 
 **Domain Services:**
-- `FeatureExtractionService` -- Computes temporal variance (Welford), Goertzel breathing estimation (9-band filter bank), L2 frame-to-frame motion score, SNR-based signal quality
-- `VitalSignDetectionService` -- Estimates breathing rate, heart rate, and confidence from CSI phase history
+- `FeatureExtractionService` -- Computes temporal variance (Welford), L2 frame-to-frame motion score, SNR-based signal quality
+- `VitalSignDetectionService` -- Estimates breathing rate, heart rate, and confidence from CSI amplitude and phase history. It is the only breathing estimator in the server
 - `DataSourceSelectionService` -- Probes UDP port 5005 for ESP32 frames; falls back through Windows RSSI then simulation
 
 **Invariants:**
 - Frame history buffer never exceeds 100 entries (oldest dropped on push)
-- Goertzel breathing estimate requires 3x SNR above noise to be reported
+- Breathing rate comes only from the vital sign detector; the signal field's breathing ring shows when it has a rate
 - Source type is determined once at startup and does not change during runtime
 
 ---

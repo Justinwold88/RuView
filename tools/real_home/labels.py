@@ -55,6 +55,13 @@ def require(condition, reason):
         raise LabelError(reason)
 
 
+def outside_git(path):
+    """Labels and intervals are person data: refuse paths inside a Git work tree."""
+    path = Path(path).expanduser().absolute()
+    require(not any((p / ".git").exists() for p in path.parents), "labels_must_be_outside_git")
+    return path
+
+
 def parse_time(value):
     require(isinstance(value, str) and value.endswith("Z"), "time_must_be_utc_iso_with_z")
     try:
@@ -100,7 +107,10 @@ def read_labels(path):
 
 
 def intervals_from(rows):
-    """Pair start/end events per (room, state, spot). Returns (intervals, walk_ins)."""
+    """Pair start/end events per (room, state); a still end must name its start's spot.
+
+    Returns (intervals, walk_ins).
+    """
     open_states, intervals, walk_ins = {}, [], []
     for stamp, row in rows:
         event, room = row["event"], row["room"]
@@ -308,6 +318,9 @@ def main(argv=None):
     check.add_argument("--intervals", type=Path, help="Write guarded scoring intervals (private) to this JSON")
     args = parser.parse_args(argv)
     try:
+        outside_git(args.labels)
+        if getattr(args, "intervals", None):
+            outside_git(args.intervals)
         if args.command == "mark":
             at = args.at or format_time(datetime.now(timezone.utc))
             written = append_row(args.labels, {"time_utc": at, "room": args.room, "event": args.event,

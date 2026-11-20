@@ -201,6 +201,10 @@ def record(sock, root, *, clock=time.time_ns, monotonic=time.monotonic_ns, min_f
                     log(json.dumps({"rates_per_s": {k: round(v / seconds, 2) for k, v in sorted(window.items())},
                                     "total": total}))
                     window, last_stats = {}, now_mono
+        except BaseException as error:
+            # The manifest must not record a crash as a clean stop.
+            reason = f"error:{type(error).__name__}"
+            raise
         finally:
             writer.close(note=reason)
             events.close()

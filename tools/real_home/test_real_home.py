@@ -91,6 +91,21 @@ class RecorderTests(unittest.TestCase):
         names = sorted(p.name for p in self.root.rglob("*.pcap"))
         self.assertEqual(names, ["2026-11-30T01Z-r1.pcap", "2026-11-30T01Z.pcap"])
 
+    def test_a_crash_is_recorded_in_the_manifest(self):
+        stream = iter([csi(1)])
+
+        class FakeSocket:
+            def recv(self, size):
+                try:
+                    return next(stream)
+                except StopIteration:
+                    raise OSError("socket closed") from None
+
+        with self.assertRaises(OSError):
+            record_tee.record(FakeSocket(), self.root, clock=lambda: 10**18, min_free_bytes=0, log=lambda *_: None)
+        manifest = [json.loads(line) for line in (self.root / "manifest.jsonl").read_text().splitlines()]
+        self.assertEqual(manifest[0]["note"], "error:OSError")
+
     def test_clock_jump_is_logged(self):
         times = iter([10**18, 10**18 + 5 * 10**9])
         monotonic = iter([0, 0, 1, 1, 2, 2, 3, 3, 4])
@@ -257,6 +272,9 @@ class LabelTests(unittest.TestCase):
                                       "--intervals", str(out)]), 3)
         self.assertEqual(json.loads(out.read_text())["walk_ins"][0]["source"], "door")
         self.assertEqual(labels.main(["mark", "still_start", "--labels", str(self.path), "--at", at(1, 8)]), 1)
+        inside = Path(__file__).resolve().parent / "labels.csv"
+        self.assertEqual(labels.main(["mark", "room_empty_start", "--labels", str(inside)]), 1)
+        self.assertFalse(inside.exists())
 
 
 if __name__ == "__main__":

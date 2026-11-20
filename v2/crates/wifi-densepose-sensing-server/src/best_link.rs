@@ -180,7 +180,10 @@ impl BestLink {
             now.saturating_duration_since(at) >= self.interval()
         });
         let selected_fresh = self.selected.is_some_and(|id| fresh_nodes.contains(&id));
-        if selected_fresh && !due {
+        // Between rankings keep the choice, including "fuse all" after a
+        // ranking that saw no clear activity; only a followed node that went
+        // stale forces an early ranking.
+        if !due && (selected_fresh || self.selected.is_none()) {
             return self.selected;
         }
         let ranking: BTreeMap<u8, RankEntry> = fresh_nodes
@@ -340,12 +343,19 @@ mod tests {
     }
 
     #[test]
-    fn no_clear_activity_keeps_fusing() {
+    fn no_clear_activity_keeps_fusing_until_the_next_ranking() {
         let mut b = BestLink::new(false, DEFAULT_RERANK);
+        let t0 = Instant::now();
         feed(&mut b, 1, 0.02, 0.03, 2000);
         feed(&mut b, 2, 0.02, 0.04, 2000);
-        assert_eq!(b.select(Instant::now(), &[1, 2], &BTreeMap::new()), None);
+        assert_eq!(b.select(t0, &[1, 2], &BTreeMap::new()), None);
         assert_eq!(b.last_ranking().len(), 2);
+        // Activity soon after does not trigger a ranking before it is due.
+        feed(&mut b, 1, 0.02, 0.20, 2000);
+        let soon = t0 + Duration::from_secs(60);
+        assert_eq!(b.select(soon, &[1, 2], &BTreeMap::new()), None);
+        let due = t0 + Duration::from_secs(3600);
+        assert_eq!(b.select(due, &[1, 2], &BTreeMap::new()), Some(1));
     }
 
     #[test]

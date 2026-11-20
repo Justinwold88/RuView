@@ -474,5 +474,46 @@
       },
       "refused": {}
     }
+  },
+  "seed_sets": {
+    "0": {
+      "empty_rooms_read_occupied": 0,
+      "empty_rooms_total": 5,
+      "still_person_held_without_false_presence": 0,
+      "still_person_total": 5,
+      "walk_ins_caught": 5,
+      "walk_ins_total": 5,
+      "breath_mae_bpm": {
+        "-10dB": 1.03,
+        "-15dB": 0.77,
+        "-20dB": 1.53
+      }
+    },
+    "1": {
+      "empty_rooms_read_occupied": 0,
+      "empty_rooms_total": 5,
+      "still_person_held_without_false_presence": 0,
+      "still_person_total": 5,
+      "walk_ins_caught": 5,
+      "walk_ins_total": 5,
+      "breath_mae_bpm": {
+        "-10dB": 0.75,
+        "-15dB": 1.74,
+        "-20dB": 0.93
+      }
+    },
+    "2": {
+      "empty_rooms_read_occupied": 0,
+      "empty_rooms_total": 5,
+      "still_person_held_without_false_presence": 0,
+      "still_person_total": 5,
+      "walk_ins_caught": 5,
+      "walk_ins_total": 5,
+      "breath_mae_bpm": {
+        "-10dB": 0.78,
+        "-15dB": 4.03,
+        "-20dB": 1.39
+      }
+    }
   }
 }

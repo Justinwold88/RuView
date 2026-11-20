@@ -1386,8 +1386,10 @@ The system extracts breathing rate and heart rate from CSI signal fluctuations u
 
 | Sign | Frequency Band | Range | Method |
 |------|---------------|-------|--------|
-| Breathing | 0.1-0.5 Hz | 6-30 BPM | Bandpass filter + FFT peak |
-| Heart rate | 0.8-2.0 Hz | 40-120 BPM | Bandpass filter + FFT peak |
+| Breathing | 0.1-0.5 Hz | 6-30 BPM | Per-subcarrier streams, top 6 by breathing-band energy, PCA, FFT peak (needs 10 s of CSI) |
+| Heart rate | 0.8-2.0 Hz | 40-120 BPM | Bandpass filter + FFT peak (experimental; hidden from Home Assistant by default) |
+
+Breathing does not average the subcarriers, because breathing pushes some up and others down and the average cancels much of it. Each subcarrier's log-amplitude (with the frame's common gain removed), the common gain itself, and each subcarrier's cleaned phase (unwrapped, with the per-packet offset and timing slope removed) is a separate stream. Once a second the server keeps the streams with the most energy in the breathing band (up to 6, and only those close to the best), combines them with PCA, and takes the spectral peak. If half that frequency is nearly as strong, it reports the half, because a strong second harmonic is common. In the SYNTHETIC scenario harness the error is 0.02 to 0.09 BPM across three seed sets and three reflection strengths. It has not been MEASURED against a reference on real hardware.
 
 **Requirements:**
 - CSI-capable hardware (ESP32-S3 or research NIC) for accurate readings

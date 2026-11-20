@@ -4,6 +4,16 @@
 //! estimation using FFT-based spectral analysis on CSI amplitude and phase
 //! time series. Designed per ADR-021 (rvdna vital sign pipeline).
 //!
+//! Breathing (plan item 1.2) does not average the subcarriers together:
+//! breathing moves some subcarriers up and others down, so the mean cancels
+//! much of it. Instead every subcarrier's log-amplitude (with the per-frame
+//! gain removed) and its cleaned phase (unwrapped across subcarriers, with
+//! the per-packet linear offset removed) is kept as a separate stream. Once
+//! per second the six streams with the most energy in the breathing band are
+//! combined with PCA and the peak of the first component is the estimate.
+//! In the SYNTHETIC scenario harness this took breathing error from about
+//! 0.8-1.5 BPM to under 0.5 BPM; it is not yet MEASURED on hardware.
+//!
 //! All math is pure Rust -- no external FFT crate required. Uses a radix-2
 //! DIT FFT for buffers zero-padded to power-of-two length. A windowed-sinc
 //! FIR bandpass filter isolates the frequency bands of interest before
@@ -30,6 +40,27 @@ const MIN_HEARTBEAT_SAMPLES: usize = 30; // ~1.5s at 20 Hz
 
 /// Peak-to-mean ratio threshold for confident detection.
 const CONFIDENCE_THRESHOLD: f64 = 2.0;
+
+/// Breathing streams are block-averaged down to about this rate before the
+/// spectral work. Breathing is below 0.5 Hz, so 4 Hz keeps it with room to
+/// spare and cuts the per-second work by the decimation factor.
+const BREATHING_STREAM_HZ: f64 = 4.0;
+/// Seconds of decimated history needed before the first breathing estimate:
+/// one full cycle at 6 BPM.
+const MIN_BREATHING_SECS: f64 = 10.0;
+/// At most this many streams are combined by PCA, ranked by breathing-band
+/// energy.
+const BREATHING_TOP_STREAMS: usize = 6;
+/// Only streams whose band-energy share is at least this fraction of the
+/// best stream's are combined. When one stream carries the breathing and the
+/// rest are noise, PCA over equally weighted noise streams loses it.
+const BREATHING_STREAM_KEEP: f64 = 0.75;
+/// If the spectrum at half the peak frequency reaches this share of the
+/// peak, the half frequency is taken: amplitude breathing often shows a
+/// strong second harmonic when the reflection sits near a Fresnel-zone edge.
+const BREATHING_SUBHARMONIC_SHARE: f64 = 0.5;
+/// Zero-padding factor for the final breathing spectrum.
+const BREATHING_FFT_PAD: usize = 4;
 
 // ── Output types ───────────────────────────────────────────────────────────
 
@@ -66,8 +97,13 @@ impl Default for VitalSigns {
 /// data and extracts breathing and heart rate via spectral analysis.
 #[allow(dead_code)]
 pub struct VitalSignDetector {
-    /// Rolling buffer of mean-amplitude samples for breathing detection.
+    /// Rolling buffer of mean-amplitude samples. Drives the signal-quality
+    /// fill factor and `buffer_status`; breathing itself is estimated from
+    /// `breathing_streams`.
     breathing_buffer: VecDeque<f64>,
+    /// Per-subcarrier breathing streams, block-averaged to about
+    /// [`BREATHING_STREAM_HZ`].
+    breathing_streams: BreathingStreams,
     /// Rolling buffer of phase-variance samples for heartbeat detection.
     heartbeat_buffer: VecDeque<f64>,
     /// CSI frame arrival rate in Hz.
@@ -116,6 +152,7 @@ impl VitalSignDetector {
 
         Self {
             breathing_buffer: VecDeque::with_capacity(breathing_capacity.max(1)),
+            breathing_streams: BreathingStreams::new(sample_rate, breathing_window_secs),
             heartbeat_buffer: VecDeque::with_capacity(heartbeat_capacity.max(1)),
             sample_rate,
             breathing_window_secs,
@@ -155,6 +192,14 @@ impl VitalSignDetector {
         let n = amplitude.len() as f64;
         let mean_amp: f64 = amplitude.iter().sum::<f64>() / n;
 
+        // A new subcarrier layout restarts the breathing streams; restart
+        // the mean-amplitude history and cached estimate with them, so the
+        // buffer status and signal-quality fill do not report history that
+        // breathing can no longer use.
+        if self.breathing_streams.push(amplitude, phase) {
+            self.breathing_buffer.clear();
+            self.last_estimate = None;
+        }
         self.breathing_buffer.push_back(mean_amp);
         while self.breathing_buffer.len() > self.breathing_capacity {
             self.breathing_buffer.pop_front();
@@ -221,16 +266,14 @@ impl VitalSignDetector {
         }
     }
 
-    /// Extract breathing rate from the breathing buffer via FFT.
-    /// Returns (rate_bpm, confidence).
+    /// Extract breathing rate from the per-subcarrier streams: rank them by
+    /// breathing-band energy, combine the top few with PCA, and take the
+    /// spectral peak of the first component. Returns (rate_bpm, confidence).
     pub fn extract_breathing(&self) -> (Option<f64>, f64) {
         if self.breathing_buffer.len() < MIN_BREATHING_SAMPLES {
             return (None, 0.0);
         }
-
-        let data: Vec<f64> = self.breathing_buffer.iter().copied().collect();
-        let filtered = bandpass_filter(&data, BREATHING_MIN_HZ, BREATHING_MAX_HZ, self.sample_rate);
-        self.compute_fft_peak(&filtered, BREATHING_MIN_HZ, BREATHING_MAX_HZ)
+        self.breathing_streams.estimate()
     }
 
     /// Extract heart rate from the heartbeat buffer via FFT.
@@ -327,11 +370,7 @@ impl VitalSignDetector {
         let bpm = peak_freq * 60.0;
 
         // Confidence mapping: peak_ratio >= CONFIDENCE_THRESHOLD maps to high confidence
-        let confidence = if peak_ratio >= CONFIDENCE_THRESHOLD {
-            ((peak_ratio - 1.0) / (CONFIDENCE_THRESHOLD * 2.0 - 1.0)).clamp(0.0, 1.0)
-        } else {
-            ((peak_ratio - 1.0) / (CONFIDENCE_THRESHOLD - 1.0) * 0.5).clamp(0.0, 0.5)
-        };
+        let confidence = peak_ratio_confidence(peak_ratio);
 
         if confidence > 0.05 {
             (Some(bpm), confidence)
@@ -378,6 +417,7 @@ impl VitalSignDetector {
     /// Clear all internal buffers and reset state.
     pub fn reset(&mut self) {
         self.breathing_buffer.clear();
+        self.breathing_streams.clear();
         self.heartbeat_buffer.clear();
         self.frame_count = 0;
         self.frames_since_estimate = 0;
@@ -402,6 +442,7 @@ impl VitalSignDetector {
         self.heartbeat_capacity =
             ((sample_rate * self.heartbeat_window_secs) as usize).max(1);
         self.estimate_interval_frames = estimate_interval_frames(sample_rate);
+        self.breathing_streams = BreathingStreams::new(sample_rate, self.breathing_window_secs);
         self.reset();
         true
     }
@@ -419,6 +460,351 @@ impl VitalSignDetector {
             self.heartbeat_buffer.len(),
             self.heartbeat_capacity,
         )
+    }
+}
+
+// ── Breathing streams (plan item 1.2) ─────────────────────────────────────
+
+/// Rolling, block-averaged history of one feature vector per frame:
+/// per-subcarrier log-amplitude with the frame's mean removed, the frame's
+/// mean log-amplitude itself, and per-subcarrier cleaned phase.
+struct BreathingStreams {
+    /// Frames averaged into one stored sample.
+    decimation: usize,
+    /// Rate of the stored samples, Hz.
+    rate_hz: f64,
+    capacity: usize,
+    samples: VecDeque<Vec<f64>>,
+    block_sum: Vec<f64>,
+    block_frames: usize,
+}
+
+impl BreathingStreams {
+    fn new(sample_rate: f64, window_secs: f64) -> Self {
+        let decimation = ((sample_rate / BREATHING_STREAM_HZ).round() as usize).max(1);
+        let rate_hz = sample_rate / decimation as f64;
+        Self {
+            decimation,
+            rate_hz,
+            capacity: ((window_secs * rate_hz).round() as usize).max(1),
+            samples: VecDeque::new(),
+            block_sum: Vec::new(),
+            block_frames: 0,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.samples.clear();
+        self.block_sum.clear();
+        self.block_frames = 0;
+    }
+
+    /// Add one frame. Returns true when the frame's layout differs from the
+    /// stored history, which is then discarded.
+    fn push(&mut self, amplitude: &[f64], phase: &[f64]) -> bool {
+        let features = breathing_features(amplitude, phase);
+        if features.is_empty() {
+            return false;
+        }
+        // A different subcarrier layout cannot share history with the old one.
+        let width = self.samples.front().map_or(self.block_sum.len(), Vec::len);
+        let restarted = width != 0 && width != features.len();
+        if restarted {
+            self.clear();
+        }
+        if self.block_sum.len() != features.len() {
+            self.block_sum = vec![0.0; features.len()];
+        }
+        for (acc, x) in self.block_sum.iter_mut().zip(&features) {
+            *acc += x;
+        }
+        self.block_frames += 1;
+        if self.block_frames == self.decimation {
+            let n = self.block_frames as f64;
+            self.samples
+                .push_back(self.block_sum.iter().map(|v| v / n).collect());
+            self.block_sum.iter_mut().for_each(|v| *v = 0.0);
+            self.block_frames = 0;
+            while self.samples.len() > self.capacity {
+                self.samples.pop_front();
+            }
+        }
+        restarted
+    }
+
+    /// Breathing rate and confidence from the stored history.
+    fn estimate(&self) -> (Option<f64>, f64) {
+        let n = self.samples.len();
+        if (n as f64) < MIN_BREATHING_SECS * self.rate_hz || n < 8 {
+            return (None, 0.0);
+        }
+        let width = self.samples[0].len();
+        // Detrended streams, stream-major.
+        let streams: Vec<Vec<f64>> = (0..width)
+            .map(|j| detrend(&self.samples.iter().map(|s| s[j]).collect::<Vec<_>>()))
+            .collect();
+
+        // Rank streams by the share of their (Hann-windowed) energy that lies
+        // in the breathing band. The DFT bins are evaluated directly: only the
+        // dozen or so band bins are needed, not a full spectrum per stream.
+        let k_lo = (BREATHING_MIN_HZ * n as f64 / self.rate_hz).ceil() as usize;
+        let k_hi = ((BREATHING_MAX_HZ * n as f64 / self.rate_hz).floor() as usize).min(n / 2);
+        if k_lo == 0 || k_lo > k_hi {
+            return (None, 0.0);
+        }
+        let window: Vec<f64> = (0..n)
+            .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f64 / (n as f64 - 1.0)).cos()))
+            .collect();
+        let twiddles: Vec<Vec<(f64, f64)>> = (k_lo..=k_hi)
+            .map(|k| {
+                let (step_s, step_c) = (-2.0 * PI * k as f64 / n as f64).sin_cos();
+                let (mut c, mut s) = (1.0_f64, 0.0_f64);
+                (0..n)
+                    .map(|i| {
+                        let w = (window[i] * c, window[i] * s);
+                        let (nc, ns) = (c * step_c - s * step_s, c * step_s + s * step_c);
+                        c = nc;
+                        s = ns;
+                        w
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut ranked: Vec<(f64, usize)> = streams
+            .iter()
+            .enumerate()
+            .filter_map(|(j, x)| {
+                let total: f64 = x.iter().zip(&window).map(|(v, w)| (v * w).powi(2)).sum();
+                if total <= f64::EPSILON {
+                    return None;
+                }
+                let band: f64 = twiddles
+                    .iter()
+                    .map(|tw| {
+                        let (re, im) = x
+                            .iter()
+                            .zip(tw)
+                            .fold((0.0, 0.0), |(re, im), (v, (c, s))| (re + v * c, im + v * s));
+                        re * re + im * im
+                    })
+                    .sum();
+                // One-sided band energy as a share of all energy (Parseval).
+                Some((2.0 * band / (n as f64 * total), j))
+            })
+            .collect();
+        if ranked.is_empty() {
+            return (None, 0.0);
+        }
+        ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let keep = ranked[0].0 * BREATHING_STREAM_KEEP;
+        ranked.retain(|(share, _)| *share >= keep);
+        ranked.truncate(BREATHING_TOP_STREAMS);
+
+        // z-score the chosen streams and take their first principal component.
+        let chosen: Vec<Vec<f64>> = ranked
+            .iter()
+            .map(|(_, j)| {
+                let x = &streams[*j];
+                let sd = (x.iter().map(|v| v * v).sum::<f64>() / n as f64)
+                    .sqrt()
+                    .max(1e-12);
+                x.iter().map(|v| v / sd).collect()
+            })
+            .collect();
+        let pc = first_principal_component(&chosen);
+        compute_spectral_peak(
+            &pc,
+            self.rate_hz,
+            BREATHING_MIN_HZ,
+            BREATHING_MAX_HZ,
+            BREATHING_FFT_PAD,
+            Some(BREATHING_SUBHARMONIC_SHARE),
+        )
+    }
+}
+
+/// One frame's breathing features. Amplitude streams use log-amplitude with
+/// the frame mean removed, which cancels per-packet gain changes; the frame
+/// mean is kept as one more stream so a signal common to every subcarrier is
+/// not lost. Phase streams are added when every subcarrier has a phase.
+fn breathing_features(amplitude: &[f64], phase: &[f64]) -> Vec<f64> {
+    if amplitude.is_empty() || amplitude.iter().any(|a| !a.is_finite()) {
+        return Vec::new();
+    }
+    let log_amp: Vec<f64> = amplitude.iter().map(|a| a.max(1e-3).ln()).collect();
+    let mean = log_amp.iter().sum::<f64>() / log_amp.len() as f64;
+    let mut out = Vec::with_capacity(2 * amplitude.len() + 1);
+    out.extend(log_amp.iter().map(|v| v - mean));
+    out.push(mean);
+    if phase.len() == amplitude.len() && phase.len() >= 3 && phase.iter().all(|p| p.is_finite()) {
+        out.extend(sanitize_phase(phase));
+    }
+    out
+}
+
+/// Unwrap phase across subcarriers and remove the least-squares line, which
+/// cancels the per-packet common phase offset and timing slope that ESP32
+/// CSI carries. Subcarriers are assumed to be in frequency order.
+fn sanitize_phase(phase: &[f64]) -> Vec<f64> {
+    let mut unwrapped = Vec::with_capacity(phase.len());
+    let mut offset = 0.0;
+    let mut prev = phase[0];
+    for &p in phase {
+        let d = p - prev;
+        if d > PI {
+            offset -= 2.0 * PI;
+        } else if d < -PI {
+            offset += 2.0 * PI;
+        }
+        unwrapped.push(p + offset);
+        prev = p;
+    }
+    detrend(&unwrapped)
+}
+
+/// Remove the least-squares straight line (and so the mean).
+fn detrend(x: &[f64]) -> Vec<f64> {
+    let n = x.len() as f64;
+    if x.len() < 2 {
+        return x.iter().map(|_| 0.0).collect();
+    }
+    let xm = (n - 1.0) / 2.0;
+    let ym = x.iter().sum::<f64>() / n;
+    let (mut num, mut den) = (0.0, 0.0);
+    for (i, &y) in x.iter().enumerate() {
+        let dx = i as f64 - xm;
+        num += dx * (y - ym);
+        den += dx * dx;
+    }
+    let slope = if den > 0.0 { num / den } else { 0.0 };
+    x.iter()
+        .enumerate()
+        .map(|(i, &y)| y - ym - slope * (i as f64 - xm))
+        .collect()
+}
+
+/// Projection of `streams` (each the same length) onto their first
+/// principal component, found by power iteration on the covariance.
+fn first_principal_component(streams: &[Vec<f64>]) -> Vec<f64> {
+    let k = streams.len();
+    let n = streams.first().map_or(0, Vec::len);
+    if k == 1 {
+        return streams[0].clone();
+    }
+    let mut cov = vec![vec![0.0; k]; k];
+    for a in 0..k {
+        for b in a..k {
+            let c: f64 = streams[a].iter().zip(&streams[b]).map(|(x, y)| x * y).sum();
+            cov[a][b] = c;
+            cov[b][a] = c;
+        }
+    }
+    let mut v = vec![1.0 / (k as f64).sqrt(); k];
+    for _ in 0..100 {
+        let mut next: Vec<f64> = (0..k)
+            .map(|a| (0..k).map(|b| cov[a][b] * v[b]).sum())
+            .collect();
+        let norm = next.iter().map(|x| x * x).sum::<f64>().sqrt();
+        if norm <= f64::EPSILON {
+            break;
+        }
+        next.iter_mut().for_each(|x| *x /= norm);
+        let delta: f64 = next.iter().zip(&v).map(|(a, b)| (a - b).abs()).sum();
+        v = next;
+        if delta < 1e-10 {
+            break;
+        }
+    }
+    (0..n)
+        .map(|i| (0..k).map(|a| v[a] * streams[a][i]).sum())
+        .collect()
+}
+
+/// Peak of `x` in [min_hz, max_hz] after a Hann window and `pad`-times zero
+/// padding, with parabolic interpolation. Confidence uses the same
+/// peak-to-band-mean mapping as [`VitalSignDetector::compute_fft_peak`].
+/// With `subharmonic_share`, a peak whose half frequency is in the band and
+/// reaches that share of the peak's magnitude is replaced by the half.
+fn compute_spectral_peak(
+    x: &[f64],
+    rate_hz: f64,
+    min_hz: f64,
+    max_hz: f64,
+    pad: usize,
+    subharmonic_share: Option<f64>,
+) -> (Option<f64>, f64) {
+    let n = x.len();
+    if n < 4 {
+        return (None, 0.0);
+    }
+    let fft_len = (n * pad.max(1)).next_power_of_two();
+    let mut signal = vec![0.0; fft_len];
+    for (i, v) in x.iter().enumerate() {
+        let w = 0.5 * (1.0 - (2.0 * PI * i as f64 / (n as f64 - 1.0)).cos());
+        signal[i] = v * w;
+    }
+    let spectrum = fft_magnitude(&signal);
+    let res = rate_hz / fft_len as f64;
+    let lo = (min_hz / res).ceil() as usize;
+    let hi = ((max_hz / res).floor() as usize).min(spectrum.len().saturating_sub(1));
+    if lo >= hi {
+        return (None, 0.0);
+    }
+    let argmax = |from: usize, to: usize| {
+        (from..=to)
+            .map(|b| (b, spectrum[b]))
+            .fold(
+                (from, 0.0),
+                |best, cur| if cur.1 > best.1 { cur } else { best },
+            )
+    };
+    let (mut peak_bin, mut peak) = argmax(lo, hi);
+    if let Some(share) = subharmonic_share {
+        // Search half a coarse bin either side of half the peak frequency.
+        let half = peak_bin / 2;
+        let reach = (pad / 2).max(1);
+        if half >= lo + reach {
+            let (b, m) = argmax(half - reach, (half + reach).min(hi));
+            if m >= share * peak {
+                peak_bin = b;
+                peak = m;
+            }
+        }
+    }
+    let band_mean = spectrum[lo..=hi].iter().sum::<f64>() / (hi - lo + 1) as f64;
+    if band_mean <= f64::EPSILON {
+        return (None, 0.0);
+    }
+    let offset = if peak_bin > lo && peak_bin < hi {
+        let (a, b, c) = (
+            spectrum[peak_bin - 1],
+            spectrum[peak_bin],
+            spectrum[peak_bin + 1],
+        );
+        let d = a - 2.0 * b + c;
+        if d.abs() > f64::EPSILON {
+            0.5 * (a - c) / d
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+    let confidence = peak_ratio_confidence(peak / band_mean);
+    let bpm = (peak_bin as f64 + offset) * res * 60.0;
+    if confidence > 0.05 {
+        (Some(bpm), confidence)
+    } else {
+        (None, confidence)
+    }
+}
+
+/// Map a spectral peak-to-band-mean ratio to a 0-1 confidence.
+fn peak_ratio_confidence(peak_ratio: f64) -> f64 {
+    if peak_ratio >= CONFIDENCE_THRESHOLD {
+        ((peak_ratio - 1.0) / (CONFIDENCE_THRESHOLD * 2.0 - 1.0)).clamp(0.0, 1.0)
+    } else {
+        ((peak_ratio - 1.0) / (CONFIDENCE_THRESHOLD - 1.0) * 0.5).clamp(0.0, 0.5)
     }
 }
 
@@ -988,6 +1374,125 @@ mod tests {
             let phase = vec![0.0];
             let _ = detector.process_frame(&amp, &phase);
         }
+    }
+
+    /// Deterministic noise in [-1, 1) for the stream tests.
+    fn noise(seed: &mut u64) -> f64 {
+        *seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((*seed >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+    }
+
+    #[test]
+    fn sanitize_phase_removes_offset_and_slope_across_the_wrap() {
+        // A common offset plus a timing slope, wrapped into (-pi, pi].
+        let phase: Vec<f64> = (0..52)
+            .map(|i| {
+                let p: f64 = 2.9 + 0.35 * i as f64;
+                (p + PI).rem_euclid(2.0 * PI) - PI
+            })
+            .collect();
+        let clean = sanitize_phase(&phase);
+        assert!(clean.iter().all(|v| v.abs() < 1e-9), "{clean:?}");
+    }
+
+    #[test]
+    fn breathing_found_when_only_the_common_gain_carries_it() {
+        // Each subcarrier is independent noise; breathing moves all of them
+        // together, so only the frame-mean stream carries it. Averaging PCA
+        // over equally weighted noise streams used to lose this.
+        let sr = 20.0;
+        let mut det = VitalSignDetector::new(sr);
+        let mut seed = 7;
+        let target_bpm = 19.5;
+        let mut vs = VitalSigns::default();
+        for frame in 0..(sr as usize * 40) {
+            let t = frame as f64 / sr;
+            let gain = 1.0 + 0.05 * (2.0 * PI * target_bpm / 60.0 * t).sin();
+            let amp: Vec<f64> = (0..52)
+                .map(|i| gain * (20.0 + i as f64 * 0.1) * (1.0 + 0.05 * noise(&mut seed)))
+                .collect();
+            let phase: Vec<f64> = (0..52).map(|_| 0.2 * noise(&mut seed)).collect();
+            vs = det.process_frame(&amp, &phase);
+        }
+        let bpm = vs.breathing_rate_bpm.expect("breathing estimate");
+        assert!((bpm - target_bpm).abs() < 0.5, "{bpm}");
+    }
+
+    #[test]
+    fn a_strong_second_harmonic_does_not_double_the_rate() {
+        let rate = 4.0;
+        let n = 120; // 30 s at 4 Hz
+        let f0 = 9.9 / 60.0;
+        let x: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 / rate;
+                0.6 * (2.0 * PI * f0 * t).sin() + (2.0 * PI * 2.0 * f0 * t + 0.4).sin()
+            })
+            .collect();
+        let (with_check, _) =
+            compute_spectral_peak(&x, rate, BREATHING_MIN_HZ, BREATHING_MAX_HZ, 4, Some(0.5));
+        let (without, _) =
+            compute_spectral_peak(&x, rate, BREATHING_MIN_HZ, BREATHING_MAX_HZ, 4, None);
+        assert!((without.unwrap() - 19.8).abs() < 0.5, "{without:?}");
+        assert!((with_check.unwrap() - 9.9).abs() < 0.5, "{with_check:?}");
+    }
+
+    #[test]
+    fn a_new_subcarrier_layout_restarts_the_streams() {
+        let mut streams = BreathingStreams::new(20.0, 30.0);
+        for _ in 0..50 {
+            streams.push(&[10.0; 52], &[0.0; 52]);
+        }
+        assert_eq!(streams.samples.len(), 10);
+        assert_eq!(streams.samples[0].len(), 52 + 1 + 52);
+        assert!(streams.push(&[10.0; 56], &[0.0; 56]));
+        assert!(streams.samples.is_empty());
+        assert_eq!(streams.block_frames, 1);
+        assert!(!streams.push(&[10.0; 56], &[0.0; 56]));
+    }
+
+    #[test]
+    fn a_layout_change_restarts_the_reported_history_too() {
+        let sr = 20.0;
+        let mut det = VitalSignDetector::new(sr);
+        let frame = |n: usize, i: usize| -> Vec<f64> {
+            let t = i as f64 / sr;
+            (0..n)
+                .map(|k| 15.0 + (k as f64 * 0.1).sin() + 2.0 * (2.0 * PI * 0.25 * t).sin())
+                .collect()
+        };
+        let mut vs = VitalSigns::default();
+        for i in 0..300 {
+            vs = det.process_frame(&frame(52, i), &[0.0; 52]);
+        }
+        assert_eq!(det.buffer_status().0, 300);
+        assert!(vs.breathing_rate_bpm.is_some());
+        let vs = det.process_frame(&frame(56, 300), &[0.0; 56]);
+        assert_eq!(det.buffer_status().0, 1);
+        assert!(vs.breathing_rate_bpm.is_none(), "{vs:?}");
+    }
+
+    #[test]
+    fn breathing_needs_ten_seconds_of_history() {
+        let sr = 20.0;
+        let mut det = VitalSignDetector::new(sr);
+        let amp_at = |frame: usize| -> Vec<f64> {
+            let t = frame as f64 / sr;
+            (0..56)
+                .map(|i| 15.0 + 5.0 * (i as f64 * 0.1).sin() + 3.0 * (2.0 * PI * 0.25 * t).sin())
+                .collect()
+        };
+        let phase = vec![0.0; 56];
+        for frame in 0..(sr as usize * 9) {
+            det.process_frame(&amp_at(frame), &phase);
+        }
+        assert_eq!(det.extract_breathing().0, None);
+        for frame in (sr as usize * 9)..(sr as usize * 12) {
+            det.process_frame(&amp_at(frame), &phase);
+        }
+        assert!(det.extract_breathing().0.is_some());
     }
 
     #[test]

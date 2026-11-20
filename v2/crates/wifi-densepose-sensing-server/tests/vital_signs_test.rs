@@ -328,18 +328,25 @@ fn test_confidence_increases_with_snr() {
     }
     let (_, clean_conf) = detector_clean.extract_breathing();
 
-    // Low SNR: small breathing amplitude, lots of noise
+    // Low SNR: small breathing amplitude, lots of broadband noise. The noise
+    // must reach the breathing band: sinusoids at 12.6 and 18.1 Hz (the
+    // previous version of this test) sit outside it, and the detector now
+    // looks only at band energy, so they no longer lowered its confidence.
     let mut detector_noisy = VitalSignDetector::new(sample_rate);
+    let mut seed: u64 = 0x5EED;
+    let mut white = move || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((seed >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+    };
     for frame in 0..n_frames {
         let t = frame as f64 / sample_rate;
         let amp: Vec<f64> = (0..N_SUBCARRIERS)
             .map(|i| {
                 let base = 15.0 + 5.0 * (i as f64 * 0.1).sin();
                 // Weak breathing signal (amplitude 0.1) + heavy noise
-                let noise = 3.0
-                    * ((i as f64 * 7.3 + t * 113.7).sin() + (i as f64 * 13.1 + t * 79.3).sin())
-                    / 2.0;
-                base + 0.1 * (2.0 * PI * breathing_freq * t).sin() + noise
+                base + 0.1 * (2.0 * PI * breathing_freq * t).sin() + 3.0 * white()
             })
             .collect();
         detector_noisy.process_frame(&amp, &phase);

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Room fusion votes presence first (fix).** With several nodes fused
+  (`--fuse-all-links`, or before best-link has ranked), `fuse_room` used to
+  take a plurality over classes. Present nodes that disagreed on the level
+  (one `present_still`, one `present_moving`) could therefore lose to a single
+  `absent` node. The vote now decides present against absent first, with a
+  tie staying absent, and then picks the heaviest level among the present
+  nodes.
+  - Single-node rooms and best-link mode are unchanged.
+  - SYNTHETIC (scenario harness, three links fused): still person held 4 of
+    5 → 5 of 5, empty rooms occupied 1 of 5 → 1 of 5.
+
 - **Real-home dataset protocol and tools (plan item 2.3, PROPOSED).**
   `docs/validation/real-home-dataset-protocol.md` defines how the 7-day
   labelled home recordings behind Gate G2 are made:

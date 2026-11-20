@@ -105,14 +105,26 @@ impl RoomInference {
     }
 }
 
+/// The one node classification that votes against presence in [`fuse_room`].
+pub const ABSENT: &str = "absent";
+
 /// Fuse per-node inferences into one room aggregate.
 ///
 /// Pure and deterministic (ADR-297): the result depends only on the *set* of
 /// inputs, not on their order or on which arrived last. Each non-stale node
-/// votes for its classification with its freshness weight; the class with the
-/// greatest total freshness weight wins, ties broken by classification string
-/// order (via the sorted `BTreeMap`) so the outcome is stable. Room confidence
-/// is the freshness-weighted mean confidence of the winning class's voters.
+/// votes with its freshness weight, in two stages:
+///
+/// 1. **Present or absent.** Every class other than `"absent"` is a vote for
+///    presence. The room is present only if the presence weight exceeds the
+///    absent weight; a tie stays absent.
+/// 2. **Which level.** Among the winning side's classes, the one with the
+///    greatest total weight wins, ties broken by classification string order
+///    (via the sorted `BTreeMap`) so the outcome is stable.
+///
+/// A single plurality vote let present nodes that split between levels (for
+/// example one `present_still` and one `present_moving`) lose to a single
+/// `"absent"` node; the presence stage fixes that. Room confidence is the
+/// freshness-weighted mean confidence of the winning class's voters.
 ///
 /// A node silent longer than `stale_after_ms` contributes nothing; if no node
 /// contributes, the room is [`RoomInference::unavailable`] rather than a frozen
@@ -142,10 +154,23 @@ where
         return RoomInference::unavailable();
     }
 
-    // BTreeMap iterates in sorted key order; `>` keeps the first (lowest-order)
-    // class on a tie, so the winner is order-independent and deterministic.
+    // Stage 1: presence against absence; a tie stays absent.
+    let absent_weight = tally.get(ABSENT).map_or(0.0, |&(weight, _)| weight);
+    let present_weight: f64 = tally
+        .iter()
+        .filter(|(&class, _)| class != ABSENT)
+        .map(|(_, &(weight, _))| weight)
+        .sum();
+    let present = present_weight > absent_weight;
+
+    // Stage 2: the heaviest class on the winning side. BTreeMap iterates in
+    // sorted key order; `>` keeps the first (lowest-order) class on a tie, so
+    // the winner is order-independent and deterministic.
     let mut best: Option<(&str, f64, f64)> = None;
     for (&class, &(weight, conf_weight)) in &tally {
+        if (class != ABSENT) != present {
+            continue;
+        }
         match best {
             Some((_, bw, _)) if weight <= bw => {}
             _ => best = Some((class, weight, conf_weight)),
@@ -251,6 +276,49 @@ mod tests {
         assert_eq!(one, two);
         // Tie broken by classification string order: "absent" < "present_moving".
         assert_eq!(one.classification, "absent");
+    }
+
+    #[test]
+    fn present_nodes_split_across_levels_outvote_one_absent_node() {
+        // Plan 1.4 finding: a plurality vote over classes let one "absent"
+        // node beat two present nodes that disagreed on the level.
+        let still = node("present_still", 0.8, 0);
+        let moving = node("present_moving", 0.7, 0);
+        let empty = node("absent", 0.9, 0);
+        let room = fuse_room([&still, &moving, &empty], STALE);
+        // Presence wins 2 to 1; the level tie goes to string order.
+        assert_eq!(room.classification, "present_moving");
+        assert!((room.confidence - 0.7).abs() < 1e-9);
+        assert_eq!(room.contributing_nodes, 3);
+        assert_eq!(room, fuse_room([&empty, &moving, &still], STALE));
+    }
+
+    #[test]
+    fn presence_tie_stays_absent() {
+        let still = node("present_still", 0.8, 0);
+        let moving = node("present_moving", 0.7, 0);
+        let a = node("absent", 0.9, 0);
+        let b = node("absent", 0.6, 0);
+        let room = fuse_room([&still, &moving, &a, &b], STALE);
+        assert_eq!(room.classification, "absent");
+        assert!((room.confidence - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn level_is_the_heaviest_present_class() {
+        let still = node("present_still", 0.8, 0); // weight 1
+        let moving = node("present_moving", 0.7, STALE / 2); // weight 0.5
+        let empty = node("absent", 0.9, 0); // weight 1
+        let room = fuse_room([&still, &moving, &empty], STALE);
+        assert_eq!(room.classification, "present_still");
+        let active = node("active", 0.6, 0);
+        let room = fuse_room([&active, &empty], STALE);
+        assert_eq!(room.classification, "absent", "1 to 1 stays absent");
+        let room = fuse_room([&active, &still, &empty], STALE);
+        assert_eq!(
+            room.classification, "active",
+            "string order breaks the level tie"
+        );
     }
 
     #[test]

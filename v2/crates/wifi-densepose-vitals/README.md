@@ -30,6 +30,34 @@ resource-constrained edge deployments alongside ESP32 hardware.
 Results are stored in a `VitalSignStore` with configurable retention for historical trend
 analysis.
 
+### The sensing server's detector
+
+`VitalSignDetector` (`detector.rs`) is the detector the RuView sensing server runs, and what
+Home Assistant sees. It moved here from the server (plan item 4.1) so that the server's vitals
+come from this crate; the server re-exports it unchanged as
+`wifi_densepose_sensing_server::vital_signs`. One call per CSI frame:
+
+```rust
+use wifi_densepose_vitals::VitalSignDetector;
+
+let mut detector = VitalSignDetector::new(20.0); // frames per second
+let amplitudes = vec![1.0; 56];
+let phases = vec![0.0; 56];
+let vitals = detector.process_frame(&amplitudes, &phases);
+// vitals.breathing_rate_bpm and vitals.heart_rate_bpm are Option<f64>
+```
+
+- **Breathing:** each subcarrier's log-amplitude (frame gain removed) and cleaned phase are kept
+  as separate streams, decimated to 4 Hz; once per second the strongest streams are combined
+  by PCA and the spectral peak is taken, with a half-frequency check.
+- **Heart rate:** FFT peak in 40–120 BPM. SYNTHETIC tests put it at chance level on
+  single-antenna ESP32 CSI, which is why the server does not announce it by default.
+- **Breathing evidence** (`breathing_evidence`) feeds the server's still-person hold.
+
+Accuracy figures for this detector are SYNTHETIC (the server's scenario harness); none are
+MEASURED on hardware yet. The older `BreathingExtractor` / `HeartRateExtractor` pipeline above
+is a separate implementation, used by `ruview-kernel` and the Python bindings.
+
 Heart-rate regression fixtures include breathing without a heartbeat, mixed
 breathing and pulse signals, noise, and pulses at the cardiac band edges. These
 are synthetic software checks, not real-CSI accuracy or clinical validation.
@@ -93,6 +121,8 @@ wifi-densepose-vitals/src/
   heartrate.rs      -- HeartRateExtractor (0.8-2.0 Hz autocorrelation)
   anomaly.rs        -- VitalAnomalyDetector (Z-score, Welford stats)
   store.rs          -- VitalSignStore, VitalStats (historical retention)
+  detector.rs       -- VitalSignDetector, VitalSigns (the sensing server's detector)
+  groundtruth.rs    -- ADR-293 reference-device agreement statistics
 ```
 
 ## Related Crates

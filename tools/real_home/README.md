@@ -44,6 +44,23 @@ python tools/real_home/score_g2.py --data /private/ruview-home --intervals /priv
   --split test --freeze-commit <sha> --report g2.md --json g2.json
 ```
 
+## Fall study (plan item 2.6)
+
+`fall_session.py` runs one staged session from the
+[fall study protocol](../../docs/validation/fall-study-protocol.md). It
+shuffles the frozen trials with a recorded seed, prompts the spotter, and
+records cue and impact times. `score_falls.py` scores the firmware fall bit
+from the tee capture: falls detected (with Wilson intervals), fall-like trials
+that raised an alarm, false alarms per hour of normal activity, and false
+alarms per day of daily life outside the sessions. With `--log-detections` it
+also scores the node's own log detections.
+
+```bash
+python tools/real_home/fall_session.py --file /private/ruview-home/falls-F1.csv --session F1 --participant P1
+python tools/real_home/score_falls.py --data /private/ruview-home --sessions /private/ruview-home/falls-*.csv \
+  --json falls.json
+```
+
 Captures and labels are person data. Keep them in a private directory outside
 any Git checkout; `record_tee.py` refuses an output directory inside one.
 

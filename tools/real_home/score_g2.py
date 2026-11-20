@@ -183,6 +183,23 @@ def mmwave_breathing(capture_files):
     return out
 
 
+def subtract_spans(span, cuts):
+    """Remove every cut (start, end) from one (start, end) span; returns the pieces left."""
+    pieces = [span]
+    for cut_start, cut_end in cuts:
+        kept = []
+        for start, end in pieces:
+            if cut_end <= start or cut_start >= end:
+                kept.append((start, end))
+                continue
+            if start < cut_start:
+                kept.append((start, cut_start))
+            if cut_end < end:
+                kept.append((cut_end, end))
+        pieces = kept
+    return pieces
+
+
 def nearest_rank(sorted_values, quantile):
     """Nearest-rank percentile of an ascending list (p90 of 10 values is the 9th)."""
     if not sorted_values:

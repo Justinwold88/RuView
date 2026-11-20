@@ -82,6 +82,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slow sweep, pets and robot vacuums are not handled. Not yet MEASURED on
   hardware.
 
+- **Fall study protocol and tools (plan item 2.6, PROPOSED).**
+  `docs/validation/fall-study-protocol.md` covers:
+  - safety rules for staged falls: a landing mat, a spotter, exclusions and
+    limits
+  - a frozen, seeded session of 12 falls, 15 fall-like actions and 20 minutes
+    of normal activity
+  - frozen scoring of the existing firmware fall bit: detection within 1 s
+    before to 5 s after impact, fall-like alarms, and false alarms per hour
+    and per day
+
+  `tools/real_home/fall_session.py` runs a session. `score_falls.py` scores it
+  from the tee capture, with Wilson intervals.
+  - **Finding:** the firmware clears its fall flag on the next quiet frame,
+    while vitals packets go out every 100–2000 ms. A detection can therefore
+    vanish before any packet carries it. The study also scores node log
+    detections, to show whether that loses falls.
+  - **Finding:** the `Fall detected` Home Assistant entity was published by
+    default. The breaking change above, `--mqtt-publish-fall`, hides it until
+    the study reports.
+
 - **Best-link mode: the room follows the node that sees people (plan item
   1.4).** With several ESP32 nodes, the room verdict now follows one node
   instead of a vote across all of them: the node with the highest contrast

@@ -208,6 +208,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from 86–100% to 69–88% while all 5 walk-ins are still caught within 2 s.
   It does not help a person sitting still. Not yet MEASURED on hardware.
 
+- **Companion fusion blueprint: Wi-Fi + mmWave + BLE (plan item 3.3).**
+  New Home Assistant blueprint `09-companion-fusion-occupancy.yaml` drives
+  one "room occupied" toggle helper from RuView's `presence`, optional
+  mmWave presence sensors and optional BLE room presence (for example
+  Bermuda area sensors).
+  - Any source starts occupancy. With "Wi-Fi needs confirmation", RuView's
+    presence alone cannot start it, but holds it once mmWave or BLE has
+    seen someone.
+  - The room clears after every source has been clear for the clear delay;
+    unavailable sources count as clear; a stale helper clears after a
+    restart.
+  - The fusion runs entirely in Home Assistant. RuView receives no mmWave
+    or BLE data and stores no BLE identity.
+  - Tested (SYNTHETIC, simulated state changes) on Home Assistant core
+    2026.10.4: 10 tests in `examples/ha-blueprints/tests/`, run by the new
+    `ha-blueprint-tests.yml` workflow. Not yet run with a real mmWave module
+    or BLE tracker.
+
 - **Docker: operator flags replace the image defaults.** The entrypoint
   added `--source`, `--tick-ms`, `--ui-path`, `--http-port` and `--ws-port`
   before the operator's own flags, so `docker run <image> --source esp32`

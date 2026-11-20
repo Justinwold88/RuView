@@ -1,9 +1,10 @@
 # RuView starter Home Assistant Blueprints
 
-8 ready-to-import HA Blueprints covering the highest-leverage automations
-RuView's HA-MIND semantic primitives unlock. Drop the YAML files into
-`<HA config>/blueprints/automation/ruvnet/` and import from the HA UI
-(**Settings → Automations & Scenes → Blueprints → Import Blueprint**).
+9 ready-to-import HA Blueprints. Eight cover the highest-leverage automations
+RuView's HA-MIND semantic primitives unlock; the ninth fuses RuView with
+mmWave and BLE sensors you already have in Home Assistant. Drop the YAML
+files into `<HA config>/blueprints/automation/ruvnet/` and import from the HA
+UI (**Settings → Automations & Scenes → Blueprints → Import Blueprint**).
 
 | # | Blueprint                                                           | Primary primitive            | Use case                              | Published today? |
 |---|---------------------------------------------------------------------|------------------------------|---------------------------------------|------------------|
@@ -15,6 +16,7 @@ RuView's HA-MIND semantic primitives unlock. Drop the YAML files into
 | 6 | [Bathroom fan while occupied](06-bathroom-fan-while-occupied.yaml)   | `bathroom_occupied`          | Humidity / privacy-mode-safe          | ❌ not yet: use the bathroom node's `presence` |
 | 7 | [Escalate on fall-risk crossing](07-fall-risk-escalation.yaml)       | `fall_risk_elevated`         | AAL / preventive intervention         | ✅ |
 | 8 | [Auto-arm security when room not active](08-auto-arm-security-when-not-active.yaml) | `room_active` + `no_movement` | Self-arming security | ✅ |
+| 9 | [Companion fusion: Wi-Fi + mmWave + BLE](09-companion-fusion-occupancy.yaml) | `presence` + your mmWave and BLE entities | One "room occupied" helper from several sensors | ✅ |
 
 "Published today?" means the RuView server's MQTT discovery planner has a
 source for the primitive. `bed_exit`, `meeting_in_progress` and
@@ -37,9 +39,41 @@ without an HA install:
 python scripts/validate-ha-blueprints.py
 ```
 
+## Companion fusion (09)
+
+Blueprint 09 (plan item 3.3) drives one toggle helper, for example
+`input_boolean.living_room_occupied`, from up to three sources:
+
+| Source | What it is good at | Weak spot |
+|---|---|---|
+| RuView `presence` | Sees the whole room; catches walk-ins fast | A still person can drop out; fans and pets can cause false events |
+| mmWave presence (e.g. ESPHome HLK-LD2410, Seeed MR60BHA2) | Holds people who sit still inside its cone | Narrow field of view |
+| BLE room presence (e.g. Bermuda, ESPresense) | Knows a tracked phone or tag is in the room | Usually slower to update; a phone can be left behind |
+
+- **Start:** any source reporting present starts occupancy, so lights stay
+  responsive. Turn on **Wi-Fi needs confirmation** where a false "occupied"
+  costs more than a late one (alarms, notifications). RuView's presence
+  alone then cannot start occupancy, but it holds occupancy once mmWave or
+  BLE has seen someone.
+- **Clear:** the room clears only after every source has been clear for the
+  clear delay (default 60 s). Unavailable sources count as clear. After a
+  Home Assistant restart, a helper left on clears if nothing reports present
+  for the clear delay.
+- **Privacy:** the fusion runs entirely in Home Assistant. RuView never
+  receives the mmWave or BLE data and stores no BLE identity.
+- **Tested** against Home Assistant core 2026.10.4 with simulated state
+  changes (SYNTHETIC): `examples/ha-blueprints/tests/`, run in CI by
+  `ha-blueprint-tests.yml`. It has not yet been run with a real mmWave
+  module or BLE tracker.
+
+```bash
+python3.14 -m pip install -r examples/ha-blueprints/tests/requirements.txt
+cd examples/ha-blueprints/tests && python3.14 -m pytest -q
+```
+
 ## Privacy-mode compatibility
 
-Five of the eight blueprints work under `--privacy-mode` (no biometrics
+Six of the nine blueprints work under `--privacy-mode` (no biometrics
 exposed). The other three depend on inferred states that themselves
 derive from biometrics, so they still publish, but the operator should
 audit before deploying in regulated contexts.
@@ -54,6 +88,7 @@ audit before deploying in regulated contexts.
 | 06 Bathroom fan while occupied           | ✅ zone-derived only |
 | 07 Escalate on fall-risk crossing        | ⚠️ derives from motion-variance — state still publishes |
 | 08 Auto-arm security                     | ✅                  |
+| 09 Companion fusion                      | ✅ presence only; mmWave and BLE stay in HA |
 
 The "⚠️" markers are the inferred-state-vs-raw-value distinction from
 [ADR-115 §3.12.3](../../docs/adr/ADR-115-home-assistant-integration.md#3123-why-these-specific-primitives):

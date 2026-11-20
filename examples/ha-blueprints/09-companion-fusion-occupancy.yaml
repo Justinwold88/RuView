@@ -1,0 +1,177 @@
+blueprint:
+  name: RuView — companion fusion (Wi-Fi + mmWave + BLE)
+  description: >
+    Drives one "room occupied" toggle helper from up to three kinds of
+    sensor, fused inside Home Assistant (plan item 3.3).
+    RuView's Wi-Fi presence sees the whole room and catches walk-ins fast.
+    An mmWave presence sensor (for example an ESPHome HLK-LD2410 or a Seeed
+    MR60BHA2) keeps people who sit still inside its cone. BLE room presence
+    from a tracker such as Bermuda or ESPresense says a known phone or tag is
+    in the room. mmWave and BLE are optional.
+    The room turns occupied as soon as a starting source reports present,
+    and clears only after every source has been clear for the clear delay.
+    With "Wi-Fi needs confirmation" on, RuView's presence alone cannot start
+    occupancy, but it holds occupancy once mmWave or BLE has seen someone.
+    Unavailable sources count as clear.
+    RuView never receives the mmWave or BLE data and stores no BLE identity:
+    the fusion runs entirely in Home Assistant.
+    Tested against Home Assistant 2026.10 with simulated state changes
+    (SYNTHETIC), not with real sensors.
+  domain: automation
+  source_url: https://github.com/ruvnet/RuView/blob/main/examples/ha-blueprints/09-companion-fusion-occupancy.yaml
+  input:
+    occupancy_helper:
+      name: Room occupied helper
+      description: >
+        A toggle helper (input_boolean) that this automation turns on and
+        off. Create it first under Settings → Devices & services → Helpers.
+      selector:
+        entity:
+          domain: input_boolean
+    wifi_presence:
+      name: RuView presence
+      description: The room's RuView presence binary_sensor (one per node).
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+    mmwave_presence:
+      name: mmWave presence (optional)
+      description: Presence binary_sensor(s) from an mmWave module in this room.
+      default: []
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+    ble_presence:
+      name: BLE room presence (optional)
+      description: >
+        Entities that show a tracked phone or tag in this room. For Bermuda
+        area sensors or ESPresense room sensors, set the state below to this
+        room's name. For binary sensors, keep "on".
+      default: []
+      selector:
+        entity:
+          multiple: true
+    ble_in_room_state:
+      name: BLE "in this room" state
+      description: The state a BLE entity has while its device is in this room.
+      default: "on"
+      selector:
+        text: {}
+    wifi_needs_confirmation:
+      name: Wi-Fi needs confirmation
+      description: >
+        On: RuView's presence alone cannot start occupancy; mmWave or BLE
+        must see someone first. Use it where a false "occupied" costs more
+        than a late one. Off (default): any source starts occupancy, which
+        suits lights.
+      default: false
+      selector:
+        boolean: {}
+    clear_delay:
+      name: Clear delay
+      description: How long every source must stay clear before the room is clear.
+      default: 60
+      selector:
+        number:
+          min: 5
+          max: 1800
+          unit_of_measurement: s
+          mode: box
+
+mode: parallel
+max: 10
+
+trigger_variables:
+  wifi: !input wifi_presence
+  mmwave: !input mmwave_presence
+  ble: !input ble_presence
+  ble_state: !input ble_in_room_state
+  needs_confirmation: !input wifi_needs_confirmation
+
+variables:
+  helper: !input occupancy_helper
+  clear_delay_s: !input clear_delay
+
+trigger:
+  # A starting source reports present.
+  - platform: template
+    id: start
+    value_template: >-
+      {% set w = ([wifi] if wifi is string else wifi) | select('is_state', 'on') | list | count > 0 %}
+      {% set m = ([mmwave] if mmwave is string else mmwave) | select('is_state', 'on') | list | count > 0 %}
+      {% set b = ([ble] if ble is string else ble) | select('is_state', ble_state) | list | count > 0 %}
+      {{ m or b or (w and not needs_confirmation) }}
+  # Every source has been clear for the clear delay.
+  - platform: template
+    id: clear
+    value_template: >-
+      {% set w = ([wifi] if wifi is string else wifi) | select('is_state', 'on') | list | count > 0 %}
+      {% set m = ([mmwave] if mmwave is string else mmwave) | select('is_state', 'on') | list | count > 0 %}
+      {% set b = ([ble] if ble is string else ble) | select('is_state', ble_state) | list | count > 0 %}
+      {{ not (w or m or b) }}
+    for:
+      seconds: !input clear_delay
+  # Template triggers fire only on a change, so re-check after a restart.
+  - platform: homeassistant
+    id: restart
+    event: start
+
+action:
+  - variables:
+      any_present: >-
+        {% set w = ([wifi] if wifi is string else wifi) | select('is_state', 'on') | list | count > 0 %}
+        {% set m = ([mmwave] if mmwave is string else mmwave) | select('is_state', 'on') | list | count > 0 %}
+        {% set b = ([ble] if ble is string else ble) | select('is_state', ble_state) | list | count > 0 %}
+        {{ w or m or b }}
+      can_start: >-
+        {% set w = ([wifi] if wifi is string else wifi) | select('is_state', 'on') | list | count > 0 %}
+        {% set m = ([mmwave] if mmwave is string else mmwave) | select('is_state', 'on') | list | count > 0 %}
+        {% set b = ([ble] if ble is string else ble) | select('is_state', ble_state) | list | count > 0 %}
+        {{ m or b or (w and not needs_confirmation) }}
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: start
+        sequence:
+          - service: input_boolean.turn_on
+            target:
+              entity_id: "{{ helper }}"
+      - conditions:
+          - condition: trigger
+            id: clear
+        sequence:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: "{{ helper }}"
+      - conditions:
+          - condition: trigger
+            id: restart
+          - condition: template
+            value_template: "{{ can_start }}"
+        sequence:
+          - service: input_boolean.turn_on
+            target:
+              entity_id: "{{ helper }}"
+      - conditions:
+          - condition: trigger
+            id: restart
+          - condition: template
+            value_template: "{{ not any_present }}"
+        sequence:
+          # Sources may still be loading; clear only if nothing reports
+          # present for the whole clear delay.
+          - wait_template: >-
+              {% set w = ([wifi] if wifi is string else wifi) | select('is_state', 'on') | list | count > 0 %}
+              {% set m = ([mmwave] if mmwave is string else mmwave) | select('is_state', 'on') | list | count > 0 %}
+              {% set b = ([ble] if ble is string else ble) | select('is_state', ble_state) | list | count > 0 %}
+              {{ w or m or b }}
+            timeout:
+              seconds: "{{ clear_delay_s }}"
+            continue_on_timeout: true
+          - condition: template
+            value_template: "{{ not wait.completed }}"
+          - service: input_boolean.turn_off
+            target:
+              entity_id: "{{ helper }}"

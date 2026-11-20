@@ -20,6 +20,7 @@ import argparse
 import bisect
 import hashlib
 import json
+import math
 import statistics
 import struct
 import sys
@@ -165,11 +166,13 @@ def mmwave_breathing(capture_files):
     out = []
     for path in capture_files:
         raw = path.read_bytes()
-        require(raw[:4] == struct.pack("<I", 0xA1B23C4D) and struct.unpack_from("<I", raw, 20)[0] == 147,
-                f"not_a_tee_capture:{path.name}")
+        require(len(raw) >= 24 and raw[:4] == struct.pack("<I", 0xA1B23C4D)
+                and struct.unpack_from("<I", raw, 20)[0] == 147, f"not_a_tee_capture:{path.name}")
         offset = 24
-        while offset + 16 <= len(raw):
+        while offset < len(raw):
+            require(offset + 16 <= len(raw), f"truncated_capture_record:{path.name}")
             seconds, fraction, captured, _ = struct.unpack_from("<IIII", raw, offset)
+            require(offset + 16 + captured <= len(raw), f"truncated_capture_record:{path.name}")
             data = raw[offset + 16:offset + 16 + captured]
             offset += 16 + captured
             if len(data) == 48 and struct.unpack_from("<I", data)[0] == FUSED_MAGIC and data[5] & 0x08:
@@ -178,6 +181,13 @@ def mmwave_breathing(capture_files):
                     out.append((seconds * NS + fraction, data[4], bpm))
     out.sort()
     return out
+
+
+def nearest_rank(sorted_values, quantile):
+    """Nearest-rank percentile of an ascending list (p90 of 10 values is the 9th)."""
+    if not sorted_values:
+        return None
+    return sorted_values[max(0, math.ceil(quantile * len(sorted_values)) - 1)]
 
 
 def share(numerator, denominator):
@@ -230,7 +240,7 @@ def score(records, scoring, split, mmwave=None):
                     "within_2s": within, "already_present": walks["already_present"],
                     "missed": walks["missed"], "no_output": walks["no_output"],
                     "median_s": statistics.median(latencies) if latencies else None,
-                    "p90_s": latencies[min(len(latencies) - 1, int(0.9 * len(latencies)))] if latencies else None,
+                    "p90_s": nearest_rank(latencies, 0.9),
                     "max_s": latencies[-1] if latencies else None}
     pet = by_state.get("pet_only", [])
     pet_raised = sum(1 for s, e in pet if any(v is True for _, _, v in timeline.pieces(s, e)))
@@ -332,7 +342,7 @@ def main(argv=None):
         captures, capture_check = verified_files(root, "manifest.jsonl", args.allow_unclosed)
         scoring = json.loads(args.intervals.read_text())
         results = score(records, scoring, args.split, mmwave_breathing(captures) if captures else None)
-    except (ScoreError, OSError, ValueError, KeyError) as error:
+    except (ScoreError, OSError, ValueError, KeyError, struct.error) as error:
         print(json.dumps({"status": "ERROR", "reason": str(error)}))
         return 1
     report = {"evidence": "MEASURED", "protocol": "docs/validation/real-home-dataset-protocol.md",

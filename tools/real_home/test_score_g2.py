@@ -155,6 +155,22 @@ class FileTests(unittest.TestCase):
         files, _ = g2.verified_files(self.root, "manifest.jsonl")
         self.assertEqual(g2.mmwave_breathing(files), [(BASE + 10 * NS, 1, 15.0)])
 
+    def test_truncated_captures_fail_cleanly(self):
+        intervals = self.write_inputs()
+        capture = self.root / "2026-11-30/2026-11-30T01Z.pcap"
+        for raw in (b"", capture.read_bytes()[:-5]):
+            capture.write_bytes(raw)
+            (self.root / "manifest.jsonl").write_text(json.dumps(
+                {"file": "2026-11-30/2026-11-30T01Z.pcap", "sha256": hashlib.sha256(raw).hexdigest()}) + "\n")
+            out = Path(self.directory.name)
+            self.assertEqual(g2.main(["--data", str(self.root), "--intervals", str(intervals), "--split", "train",
+                                      "--report", str(out / "r.md"), "--json", str(out / "r.json")]), 1)
+
+    def test_nearest_rank_p90(self):
+        self.assertEqual(g2.nearest_rank(list(range(1, 11)), 0.9), 9)
+        self.assertEqual(g2.nearest_rank([5.0], 0.9), 5.0)
+        self.assertIsNone(g2.nearest_rank([], 0.9))
+
     def test_cli_scores_once_and_checks_hashes(self):
         intervals = self.write_inputs()
         out = Path(self.directory.name)

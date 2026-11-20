@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Real-home dataset protocol and tools (plan item 2.3, PROPOSED).**
+  `docs/validation/real-home-dataset-protocol.md` defines how the 7-day
+  labelled home recordings behind Gate G2 are made:
+  - the G2 metrics and their guard bands
+  - consent and privacy rules: no cameras, no names, data never committed or
+    uploaded
+  - a setup sheet, the label events and daily planned sessions
+  - a day-based train/test split frozen before scoring
+
+  `tools/real_home/record_tee.py` records the server's loopback UDP tee to
+  hourly nanosecond pcap files with a SHA-256 manifest.
+  `tools/real_home/log_outputs.py` logs the live room verdict that G2 is
+  scored on.
+  `tools/real_home/labels.py` appends label events and checks them: pairing,
+  overlaps, per-day totals, the split and the minimum test data. The
+  protocol needs the study owner's sign-off before recording starts.
 - **Public BFI motion test, frozen before any data was seen (plan item
   1.6).** New manual workflow `public-bfi-motion.yml` downloads the pinned
   public CSI-BFI-HAR BFI captures onto the runner and follows ADR-365

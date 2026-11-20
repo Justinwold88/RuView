@@ -1,0 +1,35 @@
+name: Real-home Dataset Tools
+
+on:
+  pull_request:
+    paths:
+      - 'tools/real_home/**'
+      - '.github/workflows/real-home-tools.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/real_home/**'
+      - '.github/workflows/real-home-tools.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-home-tools-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Recorder and label tests (SYNTHETIC)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - name: Run tests
+        run: python -B -m unittest discover -s tools/real_home -v

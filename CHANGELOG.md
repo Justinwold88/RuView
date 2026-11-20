@@ -34,6 +34,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tools/real_home/labels.py` appends label events and checks them: pairing,
   overlaps, per-day totals, the split and the minimum test data. The
   protocol needs the study owner's sign-off before recording starts.
+- **G2 scoring for real-home recordings (plan item 2.4, tooling).**
+  `tools/real_home/score_g2.py` applies the real-home protocol's frozen
+  scoring rules to the logged live verdict and the guarded label intervals:
+  - false occupied events per empty-home day, merged within 60 s
+  - still minutes held inside the sensing area
+  - walk-in latency, from 2 s before to 10 s after the reference, with
+    already-present and missed counts
+  - false events while people are elsewhere in the home, sleep, and
+    pet-only episodes
+  - breathing against the tee capture's mmWave values
+
+  Inputs are hash-checked against their manifests. No-output time is
+  removed from every denominator. Test days need a freeze commit and are
+  scored once. No real recordings exist yet, so there are no MEASURED
+  results.
+
 - **Public BFI motion test, frozen before any data was seen (plan item
   1.6).** New manual workflow `public-bfi-motion.yml` downloads the pinned
   public CSI-BFI-HAR BFI captures onto the runner and follows ADR-365

@@ -29,6 +29,21 @@ python tools/real_home/labels.py check --labels /private/ruview-home/labels.csv 
   --timezone America/Los_Angeles --in-area S1,S2
 ```
 
+## Scoring (plan item 2.4)
+
+`score_g2.py` applies the protocol's frozen scoring rules to the output log,
+the guarded intervals and, if present, the tee capture's mmWave breathing
+values. It checks every file against its manifest's SHA-256 first. Test days
+need `--freeze-commit` and are scored once; a second test scoring needs
+`--rescore-reason`, which is recorded in `scoring/test-scored.json`.
+
+```bash
+python tools/real_home/labels.py check --labels /private/ruview-home/labels.csv \
+  --timezone America/Los_Angeles --in-area S1,S2 --intervals /private/ruview-home/intervals.json
+python tools/real_home/score_g2.py --data /private/ruview-home --intervals /private/ruview-home/intervals.json \
+  --split test --freeze-commit <sha> --report g2.md --json g2.json
+```
+
 Captures and labels are person data. Keep them in a private directory outside
 any Git checkout; `record_tee.py` refuses an output directory inside one.
 

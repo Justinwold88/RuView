@@ -4,8 +4,8 @@
   "summary": {
     "empty_rooms_read_occupied": 0,
     "empty_rooms_total": 5,
-    "still_person_held": 0,
-    "still_person_held_without_false_presence": 0,
+    "still_person_held": 5,
+    "still_person_held_without_false_presence": 5,
     "still_person_total": 5
   },
   "empty_false_presence_pct": {
@@ -16,42 +16,42 @@
     "empty_s4": 3.86
   },
   "walk_detect_pct": {
-    "walk_s0": 98.41,
+    "walk_s0": 100.0,
     "walk_s1": 100.0,
-    "walk_s2": 85.86,
-    "walk_s3": 99.55,
-    "walk_s4": 92.27
+    "walk_s2": 100.0,
+    "walk_s3": 100.0,
+    "walk_s4": 100.0
   },
   "enter_still": {
     "enter_still_s0": {
       "empty_10_30_pct": 0.0,
       "walking_30_40_pct": 94.5,
-      "still_40_100_pct": 9.92,
-      "still_100_240_pct": 2.14
+      "still_40_100_pct": 100.0,
+      "still_100_240_pct": 100.0
     },
     "enter_still_s1": {
       "empty_10_30_pct": 0.0,
       "walking_30_40_pct": 95.0,
-      "still_40_100_pct": 8.42,
-      "still_100_240_pct": 0.0
+      "still_40_100_pct": 100.0,
+      "still_100_240_pct": 100.0
     },
     "enter_still_s2": {
       "empty_10_30_pct": 0.0,
       "walking_30_40_pct": 95.0,
-      "still_40_100_pct": 8.25,
-      "still_100_240_pct": 0.0
+      "still_40_100_pct": 100.0,
+      "still_100_240_pct": 100.0
     },
     "enter_still_s3": {
       "empty_10_30_pct": 0.0,
       "walking_30_40_pct": 94.0,
-      "still_40_100_pct": 8.75,
-      "still_100_240_pct": 0.0
+      "still_40_100_pct": 100.0,
+      "still_100_240_pct": 100.0
     },
     "enter_still_s4": {
       "empty_10_30_pct": 0.0,
       "walking_30_40_pct": 95.0,
-      "still_40_100_pct": 8.58,
-      "still_100_240_pct": 4.18
+      "still_40_100_pct": 100.0,
+      "still_100_240_pct": 100.0
     }
   },
   "vitals": {
@@ -254,11 +254,11 @@
         "empty_s2": 0.0,
         "empty_s3": 0.0,
         "empty_s4": 0.0,
-        "walk_s0": 80.86,
-        "walk_s1": 87.91,
-        "walk_s2": 80.64,
-        "walk_s3": 84.23,
-        "walk_s4": 81.95
+        "walk_s0": 100.0,
+        "walk_s1": 100.0,
+        "walk_s2": 100.0,
+        "walk_s3": 100.0,
+        "walk_s4": 100.0
       },
       "calibrated_pct": {
         "empty_s0": 0.0,
@@ -406,11 +406,11 @@
         "empty_s2": 0.73,
         "empty_s3": 0.73,
         "empty_s4": 3.86,
-        "walk_s0": 98.41,
+        "walk_s0": 100.0,
         "walk_s1": 100.0,
-        "walk_s2": 85.86,
-        "walk_s3": 99.55,
-        "walk_s4": 92.27
+        "walk_s2": 100.0,
+        "walk_s3": 100.0,
+        "walk_s4": 100.0
       },
       "calibrated_pct": {
         "empty_s0": 0.0,
@@ -418,11 +418,11 @@
         "empty_s2": 0.0,
         "empty_s3": 0.0,
         "empty_s4": 0.0,
-        "walk_s0": 83.82,
-        "walk_s1": 87.45,
-        "walk_s2": 69.27,
-        "walk_s3": 81.64,
-        "walk_s4": 75.45
+        "walk_s0": 100.0,
+        "walk_s1": 100.0,
+        "walk_s2": 100.0,
+        "walk_s3": 100.0,
+        "walk_s4": 100.0
       },
       "default_entry_secs": {
         "enter_still_s0": 0.55,
@@ -479,7 +479,7 @@
     "0": {
       "empty_rooms_read_occupied": 0,
       "empty_rooms_total": 5,
-      "still_person_held_without_false_presence": 0,
+      "still_person_held_without_false_presence": 5,
       "still_person_total": 5,
       "walk_ins_caught": 5,
       "walk_ins_total": 5,
@@ -492,7 +492,7 @@
     "1": {
       "empty_rooms_read_occupied": 0,
       "empty_rooms_total": 5,
-      "still_person_held_without_false_presence": 0,
+      "still_person_held_without_false_presence": 5,
       "still_person_total": 5,
       "walk_ins_caught": 5,
       "walk_ins_total": 5,
@@ -505,7 +505,7 @@
     "2": {
       "empty_rooms_read_occupied": 0,
       "empty_rooms_total": 5,
-      "still_person_held_without_false_presence": 0,
+      "still_person_held_without_false_presence": 5,
       "still_person_total": 5,
       "walk_ins_caught": 5,
       "walk_ins_total": 5,

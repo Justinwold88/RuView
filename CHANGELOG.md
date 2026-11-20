@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **A still person stays present while their breathing is periodic (plan
+  item 1.3).** Each ESP32 node now tracks breathing evidence: the peak of
+  the 0.1-0.5 Hz band against the median of 0.5-2 Hz, over the last 20 s.
+  After at least 2 s of clear motion, a node holds presence for 30 s and
+  then for as long as the evidence is at least 15, or its 30-second mean
+  (values capped at 20) is at least 10. Breathing alone creates presence
+  only when the evidence stays at 40 or more for 10 s. **Presence now
+  clears about 40-50 s after someone leaves** instead of within a few
+  seconds of the last motion. SYNTHETIC (scenario harness): still person
+  held in 0 of 5 walk-in-and-sit scenarios -> 5 of 5, in all three gate
+  seed sets and three further held-out sets; empty-room results
+  unchanged; all walk-ins still caught within 2 s. Gate G1 passes on all
+  SYNTHETIC rows. Not yet MEASURED on hardware.
+
 - **Breathing uses per-subcarrier streams, cleaned phase and PCA (plan
   item 1.2).** The detector no longer averages all subcarriers into one
   amplitude series. Each subcarrier's log-amplitude (per-frame gain

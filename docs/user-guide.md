@@ -444,6 +444,17 @@ Someone reading or asleep barely moves, so their motion score looks like an empt
 
 SYNTHETIC results from the scenario harness: a still person is held for the whole 100–240 s window in all 30 walk-in-and-sit scenarios across six seed sets, and empty-room results are unchanged. These numbers are not yet MEASURED on hardware. The thresholds are a first guess that real-home recordings (plan items 2.4 and 2.5) will retune.
 
+#### Several nodes in one room: best-link mode
+
+A node only senses people whose movement crosses its path. A node that never sees anyone still gets a vote, and when the moving and still readings split between levels, it can outvote the node that does see them. By default the room verdict therefore follows a single node: the one whose motion swings furthest above its own quiet level (its **contrast**, the 99th percentile of its smoothed motion over its 10th).
+
+- The first ranking happens after a node has a minute of data. Re-rankings follow 1 h, 4 h, 16 h and 64 h later, then once a week (`--best-link-rerank-hours`, default 168). If no node saw clear activity (best contrast below 3), the room keeps fusing all nodes until the next ranking.
+- Calibration link scores (see [Calibrate each room](#calibrate-each-room)) break ties between nodes with similar contrast.
+- `GET /api/v1/links` shows the mode, the followed node, the time to the next ranking, and each node's evidence.
+- `--fuse-all-links` (`RUVIEW_FUSE_ALL_LINKS=1`) restores the old behaviour of fusing every node.
+
+SYNTHETIC (scenario harness, three links on one room: one sees the person, one never does, one sees them through a noisy link): the ranking chose the link that sees the person (contrast 11.3, against 2.0 and 1.6). Following it held a still person in 5 of 5 rooms with 0 of 5 empty rooms occupied. Fusing all three held 4 of 5, with 1 of 5 empty rooms occupied. This is not yet MEASURED on hardware.
+
 ### ESP32-C5 (Experimental CSI target)
 
 The C5 profile is headless: 2.4 GHz association, 240 MHz application CPU,
@@ -709,6 +720,7 @@ Base URL: `http://localhost:3000` (Docker) or `http://localhost:8080` (binary de
 | `POST` | `/api/v1/recording/stop` | Stop the active recording | `{"status":"stopped","duration_secs":...}` |
 | `DELETE` | `/api/v1/recording/:id` | Delete a recording file | `{"status":"deleted"}` |
 | `POST` | `/api/v1/calibration/motion/start` | Start an empty-room motion calibration ([Calibrate each room](#calibrate-each-room)) | `{"success":true,"delay_secs":10.0,"duration_secs":60.0,...}` |
+| `GET` | `/api/v1/links` | Best-link mode: the node the room follows, next re-rank, per-node contrast ([best-link mode](#several-nodes-in-one-room-best-link-mode)) | `{"mode":"best_link","selected":2,"next_rerank_secs":3412,...}` |
 | `GET` | `/api/v1/calibration/motion` | Calibration progress, last results, and each node's presence threshold | `{"run":null,"last_run":{...},"nodes":{"1":{"presence_threshold":0.052,...}}}` |
 | `POST` | `/api/v1/calibration/motion/reset` | Return every node to the default threshold | `{"success":true,"cleared":2,"cancelled_run":false}` |
 | `GET` | `/api/v1/train/status` | Training run status | `{"phase":"idle"}` |

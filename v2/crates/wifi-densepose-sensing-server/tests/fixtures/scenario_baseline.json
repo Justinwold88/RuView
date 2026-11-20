@@ -515,5 +515,27 @@
         "-20dB": 0.08
       }
     }
+  },
+  "best_link": {
+    "chosen": 1,
+    "contrasts": {
+      "1": 11.29,
+      "2": 1.97,
+      "3": 1.62
+    },
+    "best_link": {
+      "empty_rooms_read_occupied": 0,
+      "still_person_held_without_false_presence": 5,
+      "walk_ins_caught": 5,
+      "empty_rooms": 5,
+      "walk_in_rooms": 5
+    },
+    "fuse_all": {
+      "empty_rooms_read_occupied": 1,
+      "still_person_held_without_false_presence": 4,
+      "walk_ins_caught": 5,
+      "empty_rooms": 5,
+      "walk_in_rooms": 5
+    }
   }
 }

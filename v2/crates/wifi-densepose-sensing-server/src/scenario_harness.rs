@@ -27,6 +27,12 @@
 //! each run once with the default presence threshold and once with the
 //! threshold a 60 s calibration of the same empty room produced.
 //!
+//! Best-link mode (plan item 1.4) is checked with three links on one room:
+//! link 1 sees the person on a typical link, link 2's path never crosses
+//! them, and link 3 sees them through a noisy link. A five-minute ranking
+//! period picks the link the room follows; the room verdict is then compared
+//! with fusing all three.
+//!
 //! The run is a ratchet, not a target. It fails when a metric is worse than
 //! the committed baseline (`tests/fixtures/scenario_baseline.json`) by more
 //! than a small tolerance. After an intentional improvement, refresh the
@@ -429,6 +435,9 @@ fn generate_with(sc: &Scenario, impairment_seed: Option<u64>) -> Generated {
 
 struct FrameOut {
     presence: bool,
+    /// The node's debounced motion level and confidence, for room fusion.
+    level: String,
+    confidence: f64,
     smoothed_motion: f64,
     detector_br: Option<f64>,
     detector_hr: Option<f64>,
@@ -504,6 +513,8 @@ fn replay_with_threshold(
         timing.total_us += t_all.elapsed().as_secs_f64() * 1e6;
         out.push(FrameOut {
             presence: cls.presence,
+            level: cls.motion_level.clone(),
+            confidence: cls.confidence,
             smoothed_motion: ns.smoothed_motion,
             detector_br: raw.breathing_rate_bpm,
             detector_hr: raw.heart_rate_bpm,
@@ -611,6 +622,114 @@ fn calibration_runs() -> BTreeMap<String, LinkRuns> {
 }
 
 // ---------------------------------------------------------------------------
+// Best-link mode (plan item 1.4)
+// ---------------------------------------------------------------------------
+
+/// The three links of one room for `sc`: 1 is `sc` itself, 2 is a different
+/// path the person never crosses, 3 sees the person through a noisy link.
+fn three_links(sc: &Scenario) -> [Scenario; 3] {
+    let seen = sc.clone();
+    let mut blind = sc.clone();
+    blind.seed += 50_000;
+    blind.person = Person::None;
+    let mut noisy = sc.clone();
+    noisy.seed += 60_000;
+    noisy.snr_db = 12.0;
+    noisy.agc_db = 1.5;
+    noisy.sto_ns = 40.0;
+    [seen, blind, noisy]
+}
+
+/// Room presence per frame from three links' outputs: following one link,
+/// or fusing all three the way the server does.
+fn room_presence(links: &[Vec<FrameOut>; 3], follow: Option<u8>) -> Vec<bool> {
+    let n = links.iter().map(Vec::len).min().unwrap_or(0);
+    (0..n)
+        .map(|i| match follow {
+            Some(id) => links[usize::from(id - 1)][i].presence,
+            None => {
+                let inferences: Vec<NodeInference> = links
+                    .iter()
+                    .map(|l| NodeInference::new(l[i].level.as_str(), l[i].confidence, Some(0)))
+                    .collect();
+                fuse_room(inferences.iter(), NODE_STALE_AFTER_MS).classification != "absent"
+            }
+        })
+        .collect()
+}
+
+fn best_link_runs(set: u64) -> BestLinkMetrics {
+    let offset = set * SEED_SET_STRIDE;
+    // Ranking period: five minutes in which someone enters, walks and sits.
+    let mut ranking = Scenario::new(
+        "ranking".into(),
+        Family::EnterStill,
+        offset + 900,
+        Person::EnterThenStill,
+    );
+    ranking.seconds = 300.0;
+    let mut selector = BestLink::new(false, best_link::DEFAULT_RERANK);
+    let warm = (10.0 * ranking.fs) as usize;
+    for (id, link) in (1u8..).zip(three_links(&ranking)) {
+        let out = replay(&link, &generate(&link), &mut Timing::default());
+        for f in &out[warm..] {
+            selector.observe(id, f.smoothed_motion);
+        }
+    }
+    let contrasts = selector
+        .pending()
+        .into_iter()
+        .filter_map(|(id, (_, c))| c.map(|c| (id.to_string(), round2(c))))
+        .collect();
+    let chosen = selector.select(Instant::now(), &[1, 2, 3], &BTreeMap::new());
+
+    let mut m = BestLinkMetrics {
+        chosen,
+        contrasts,
+        ..BestLinkMetrics::default()
+    };
+    for sc in scenarios_for(set)
+        .into_iter()
+        .filter(|s| matches!(s.family, Family::Empty | Family::EnterStill))
+    {
+        let outs = three_links(&sc).map(|l| replay(&l, &generate(&l), &mut Timing::default()));
+        let at = |secs: f64| (secs * sc.fs).round() as usize;
+        for (mode, follow) in [(&mut m.best_link, chosen), (&mut m.fuse_all, None)] {
+            let p = room_presence(&outs, follow);
+            let share = |from: usize, to: usize| {
+                let to = to.min(p.len());
+                100.0 * p[from..to].iter().filter(|x| **x).count() as f64
+                    / (to - from).max(1) as f64
+            };
+            mode.empty_rooms += usize::from(sc.family == Family::Empty);
+            mode.walk_in_rooms += usize::from(sc.family == Family::EnterStill);
+            match sc.family {
+                Family::Empty => {
+                    if share(at(10.0), p.len()) > OCCUPIED_SHARE_PCT {
+                        mode.empty_rooms_read_occupied += 1;
+                    }
+                }
+                _ => {
+                    if share(at(100.0), p.len()) >= HELD_SHARE_PCT
+                        && share(at(10.0), at(T_ENTER_SECS)) <= OCCUPIED_SHARE_PCT
+                    {
+                        mode.still_person_held_without_false_presence += 1;
+                    }
+                    let entered = at(T_ENTER_SECS);
+                    if p[entered..at(T_ENTER_SECS + WALK_IN_SECS)]
+                        .iter()
+                        .any(|x| *x)
+                    {
+                        mode.walk_ins_caught += 1;
+                    }
+                }
+            }
+        }
+    }
+    m
+}
+
+// ---------------------------------------------------------------------------
 // Scoring
 // ---------------------------------------------------------------------------
 
@@ -691,6 +810,27 @@ struct GateSummary {
     breath_mae_bpm: BTreeMap<String, Option<f64>>,
 }
 
+/// Room presence from three links (plan item 1.4).
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
+struct LinkModeResult {
+    empty_rooms_read_occupied: usize,
+    still_person_held_without_false_presence: usize,
+    walk_ins_caught: usize,
+    /// Empty rooms, and walk-in-and-sit rooms, scored.
+    empty_rooms: usize,
+    walk_in_rooms: usize,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
+struct BestLinkMetrics {
+    /// Link chosen after the ranking period (1 sees the person, 2 is
+    /// blind, 3 is noisy).
+    chosen: Option<u8>,
+    contrasts: BTreeMap<String, f64>,
+    best_link: LinkModeResult,
+    fuse_all: LinkModeResult,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Metrics {
     evidence: String,
@@ -711,6 +851,9 @@ struct Metrics {
     /// Gate G1 summary per seed set ("0", "1", "2").
     #[serde(default)]
     seed_sets: BTreeMap<String, GateSummary>,
+    /// Best-link mode against fusing all links (plan item 1.4).
+    #[serde(default)]
+    best_link: Option<BestLinkMetrics>,
 }
 
 fn share_pct(xs: &[FrameOut], from: usize, to: usize) -> f64 {
@@ -757,6 +900,7 @@ fn score(runs: &[(Scenario, Vec<FrameOut>)]) -> Metrics {
         hr_chance_mae_bpm: 0.0,
         calibration: BTreeMap::new(),
         seed_sets: BTreeMap::new(),
+        best_link: None,
     };
     let mut vitals_errors: BTreeMap<String, (Vec<f64>, usize, Vec<f64>, usize)> = BTreeMap::new();
     let mut chance = Vec::new();
@@ -1001,6 +1145,36 @@ fn regressions(now: &Metrics, base: &Metrics) -> Vec<String> {
             }
         }
     }
+    if let (Some(b), Some(n)) = (&base.best_link, &now.best_link) {
+        if n.chosen != b.chosen {
+            bad.push(format!(
+                "best link: chose {:?} (baseline {:?})",
+                n.chosen, b.chosen
+            ));
+        }
+        for (label, nm, bm) in [
+            ("best link", &n.best_link, &b.best_link),
+            ("fuse all", &n.fuse_all, &b.fuse_all),
+        ] {
+            if nm.empty_rooms_read_occupied > bm.empty_rooms_read_occupied
+                || nm.still_person_held_without_false_presence
+                    < bm.still_person_held_without_false_presence
+                || nm.walk_ins_caught < bm.walk_ins_caught
+            {
+                bad.push(format!(
+                    "{label}: empty occupied {} / still held {} / walk-ins {} (baseline {} / {} / {})",
+                    nm.empty_rooms_read_occupied,
+                    nm.still_person_held_without_false_presence,
+                    nm.walk_ins_caught,
+                    bm.empty_rooms_read_occupied,
+                    bm.still_person_held_without_false_presence,
+                    bm.walk_ins_caught
+                ));
+            }
+        }
+    } else if base.best_link.is_some() {
+        bad.push("best link: missing".into());
+    }
     // Heart rate is not ratcheted: it is at chance level and is being hidden
     // (plan item 0.4), so its number is reported only.
     for (level, b) in &base.vitals {
@@ -1174,6 +1348,39 @@ fn report_markdown(m: &Metrics, t: &Timing) -> String {
             " | ".repeat(sets.len().saturating_sub(1)),
             if per_frame <= G1_FRAME_US { "yes" } else { "no" }
         );
+    }
+    if let Some(b) = &m.best_link {
+        let _ = writeln!(r, "\n### Best-link mode (plan item 1.4, SYNTHETIC)\n");
+        let _ = writeln!(
+            r,
+            "Three links on one room: 1 sees the person (25 dB SNR), 2 never does, 3 sees them through a noisy link (12 dB). \
+             A five-minute ranking period chose link {} (contrast {}).\n",
+            b.chosen.map_or("none".into(), |c| c.to_string()),
+            b.contrasts
+                .iter()
+                .map(|(k, v)| format!("{k}: {v:.1}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let _ = writeln!(
+            r,
+            "| Room verdict | Empty rooms occupied | Still person held, no false presence before entry | Walk-ins caught within {WALK_IN_SECS:.0} s |\n|---|---|---|---|"
+        );
+        for (label, x) in [
+            ("Best link (default)", &b.best_link),
+            ("Fuse all links", &b.fuse_all),
+        ] {
+            let _ = writeln!(
+                r,
+                "| {label} | {} of {} | {} of {} | {} of {} |",
+                x.empty_rooms_read_occupied,
+                x.empty_rooms,
+                x.still_person_held_without_false_presence,
+                x.walk_in_rooms,
+                x.walk_ins_caught,
+                x.walk_in_rooms
+            );
+        }
     }
     if !m.calibration.is_empty() {
         let _ = writeln!(
@@ -1381,6 +1588,7 @@ fn scenario_harness() {
         metrics.seed_sets.insert(set.to_string(), summary);
     }
     metrics.calibration = calibration_runs();
+    metrics.best_link = Some(best_link_runs(0));
     let report = report_markdown(&metrics, &timing);
     eprintln!("{report}");
     if let Ok(path) = std::env::var("RUVIEW_SCENARIO_REPORT") {
@@ -1412,4 +1620,3 @@ fn scenario_harness() {
         bad.join("\n  ")
     );
 }
-

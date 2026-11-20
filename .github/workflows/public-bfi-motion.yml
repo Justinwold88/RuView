@@ -50,6 +50,9 @@ jobs:
             --json "$RUNNER_TEMP/report/public-bfi-motion.json" \
             --commit "$GITHUB_SHA" --run-url "$RUN_URL"
           cat "$RUNNER_TEMP/report/public-bfi-motion.md" >> "$GITHUB_STEP_SUMMARY"
+          # Also print the report (aggregate numbers only) so it can be read
+          # from the run log where artifact downloads are not available.
+          cat "$RUNNER_TEMP/report/public-bfi-motion.md"
       - name: Keep the download receipt (paths, hashes and statuses only)
         if: always()
         run: |

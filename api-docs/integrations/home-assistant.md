@@ -56,7 +56,9 @@ cargo run --release -p wifi-densepose-sensing-server --features mqtt -- \
 Within ~5 seconds of the first CSI frame, Home Assistant should auto-create:
 
 - One **device** per RuView node, named `RuView node <client-id>-node<N>` (see [Device identity](#device-identity))
-- **13 entities** per device by default, 15 with `--mqtt-publish-heart-rate`: the raw signals and semantic primitives listed in the [Entity reference](#entity-reference). `--privacy-mode` removes heart and breathing rate, leaving 12, or 13 with both flags (`possible_distress` stays; its heart-rate input is not published)
+- **11 entities** per device by default: the raw signals and semantic primitives listed in the [Entity reference](#entity-reference)
+  - `--mqtt-publish-heart-rate` adds `heart_rate` and `possible_distress`; `--mqtt-publish-fall` adds `fall` and `fall_risk_elevated`. That makes 13 with either flag and 15 with both.
+  - `--privacy-mode` removes heart and breathing rate. That leaves 10 by default, 11 with the heart-rate flag (`possible_distress` stays, though its heart-rate input is not published), 12 with the fall flag and 13 with both.
 
 If nothing appears in HA's Settings → Devices, see [Troubleshooting](#troubleshooting).
 
@@ -70,7 +72,7 @@ Ctrl-C (SIGINT/SIGTERM) stops the server. It does **not** publish `offline` firs
 
 Names below are the `unique_id` slugs; Home Assistant assigns friendly names automatically. Every entity has its own availability topic (`…/<slug>/availability`, retained). An entity is `online` only while the server has a real source for it. Otherwise it is `offline`, no state is published, and Home Assistant shows **unavailable** rather than a made-up value.
 
-### Raw signals (8 entities, 9 with `--mqtt-publish-heart-rate`)
+### Raw signals (7 entities by default; heart rate and fall are opt-in)
 
 | HA entity | Slug | HA component | Unit | Source | Available when |
 |---|---|---|---|---|---|
@@ -82,13 +84,15 @@ Names below are the `unique_id` slugs; Home Assistant assigns friendly names aut
 | Signal strength | `rssi` | `sensor` | dBm | `nodes[].rssi_dbm` | an RSSI was seen in the last 30 s |
 | Heart rate | `heart_rate` | `sensor` | bpm | `vital_signs.heart_rate_bpm` (room-level) | only with `--mqtt-publish-heart-rate`; then a published estimate in the last 30 s |
 | Breathing rate | `breathing_rate` | `sensor` | bpm | `vital_signs.breathing_rate_bpm` (room-level) | a published estimate in the last 30 s |
-| Fall detected | `fall` | `event` | — | rising edge of the node's `edge_vitals.fall_detected` | the node sent `edge_vitals` in the last 30 s |
+| Fall detected | `fall` | `event` | — | rising edge of the node's `edge_vitals.fall_detected` | only with `--mqtt-publish-fall`; then the node sent `edge_vitals` in the last 30 s |
 
 The server publishes heart and breathing rate only after explicit calibration, with exactly one occupant and a passing quality gate. Until then both entities stay unavailable. Heart rate and breathing rate are **biometric**: `--privacy-mode` removes them from discovery and state (see [Privacy](#privacy)).
 
 Heart rate is **not announced by default**. Heart rate from single-antenna ESP32 CSI has not been validated, and the server's SYNTHETIC scenario harness shows errors at chance level. Pass `--mqtt-publish-heart-rate` (or set `RUVIEW_MQTT_PUBLISH_HEART_RATE=1`) to announce it, along with `possible_distress`, which is derived from it. Do not use either for health or safety decisions.
 
-### Semantic automation primitives (5 entities, 6 with `--mqtt-publish-heart-rate`)
+Fall detection is **not announced by default** either. The firmware's phase-acceleration fall detector has not been validated. A detection can also be cleared before any vitals packet carries it. The [fall study protocol](../validation/fall-study-protocol.md) (plan item 2.6) measures both. Pass `--mqtt-publish-fall` (or set `RUVIEW_MQTT_PUBLISH_FALL=1`) to announce `fall`, along with `fall_risk_elevated`, which counts recent falls. Do not rely on either to detect a fall.
+
+### Semantic automation primitives (4 entities by default; possible distress and fall risk are opt-in)
 
 Small finite-state machines run inside the server, one set per node, sampled once per second ([ADR-115 §3.12](../adr/ADR-115-home-assistant-integration.md#312-semantic-automation-primitives-ha-mind), P4.5). All of them are unavailable for the first 60 s after start (warmup). After that each publishes its current state, then on every change.
 
@@ -99,7 +103,7 @@ Small finite-state machines run inside the server, one set per node, sampled onc
 | Elderly inactivity anomaly | `elderly_inactivity_anomaly` | `binary_sensor` | stillness > 2× the longest stillness seen since start (floor 30 min) | after warmup |
 | Someone sleeping | `someone_sleeping` | `binary_sensor` | presence + motion <5% + BR ∈ [8,20] bpm for 5 min | after warmup, while breathing rate is available |
 | Possible distress | `possible_distress` | `binary_sensor` | HR ≥ 1.5× resting baseline + motion >20% + no fall, for 60 s | only with `--mqtt-publish-heart-rate`; then after warmup, while heart rate is available |
-| Fall risk elevated | `fall_risk_elevated` | `sensor` | 0–100 score: 10 per fall in 24 h + 50 × motion variance over 60 s | after warmup, while the fall detector is available |
+| Fall risk elevated | `fall_risk_elevated` | `sensor` | 0–100 score: 10 per fall in 24 h + 50 × motion variance over 60 s | only with `--mqtt-publish-fall`; then after warmup, while the fall detector is available |
 
 Per-node motion is a three-level classification, so the motion thresholds above effectively mean "moving" or "not moving". The precision and recall figures in [`semantic-primitives-metrics.md`](./semantic-primitives-metrics.md) are CLAIMED: the replay tooling they cite is not in the repository. No `reason` attribute is published yet; the explanation tags stay server-side.
 
@@ -173,6 +177,7 @@ Per ADR-115 §3.11.1, the Matter Bridge exposes a subset on standard clusters so
 | `--mqtt-rate-rssi <HZ>` | 0.1 | RSSI publish rate (Hz) |
 | `--mqtt-publish-pose` | off | Accepted; no pose source exists, so it only logs a warning |
 | `--mqtt-publish-heart-rate` | off (`RUVIEW_MQTT_PUBLISH_HEART_RATE`) | Announce `heart_rate` and `possible_distress`. Heart rate is not validated |
+| `--mqtt-publish-fall` | off (`RUVIEW_MQTT_PUBLISH_FALL`) | Announce `fall` and `fall_risk_elevated`. The fall detector is not validated |
 | `--mqtt-rate-pose <HZ>` | 1.0 | Unused while no pose entity is announced |
 | `--privacy-mode` | off | Strip HR/BR/pose from MQTT, Matter, REST, WebSocket and recordings |
 | `--data-dir <DIR>` | `data` | Holds `mqtt_client_id` (and other server state) |
@@ -195,7 +200,7 @@ When deploying in **healthcare**, **AAL (aging-in-place)**, or **commercial** se
 - **Suppresses discovery** for those entities entirely: Home Assistant never sees them, and no availability or state topic is published for them.
 - **Keeps the semantic primitives enabled.** `someone_sleeping` and `possible_distress` (the latter only with `--mqtt-publish-heart-rate`) still use breathing and heart rate *inside the server*; only the ON/OFF state crosses the wire (ADR-115 §3.12.3). If that is too much for your deployment, drop those two entities in Home Assistant.
 
-With `--privacy-mode`, 12 entities are announced per node (13 if `--mqtt-publish-heart-rate` is also set). Privacy mode reduces what leaves the server. It does not by itself make a deployment compliant with any regulation.
+With `--privacy-mode`, 10 entities are announced per node by default: 11 with `--mqtt-publish-heart-rate`, 12 with `--mqtt-publish-fall` and 13 with both. Privacy mode reduces what leaves the server. It does not by itself make a deployment compliant with any regulation.
 
 Always pair `--privacy-mode` with `--mqtt-tls` on non-localhost brokers.
 
@@ -340,7 +345,7 @@ cards:
       - entity: binary_sensor.ruview_bedroom_someone_sleeping
       - entity: binary_sensor.ruview_bedroom_room_active
       - entity: binary_sensor.ruview_bedroom_no_movement
-      - entity: sensor.ruview_bedroom_fall_risk_elevated
+      - entity: sensor.ruview_bedroom_fall_risk_elevated  # needs --mqtt-publish-fall
 ```
 
 ### Multi-node grid
@@ -446,7 +451,7 @@ The 15 entities per node (9 raw signals and 6 semantic states, see the [Entity r
 
 | Use case | Which entities | Why this works |
 |---|---|---|
-| **Fall detection + escalation** | `fall_detected` | Phase-acceleration spike + 3-frame debounce. Trigger a Lovelace alert, then escalate to a phone call if the person stays still for >2 min. Blueprint `07-fall-risk-escalation.yaml`. |
+| **Fall detection + escalation** | `fall_detected` | Needs `--mqtt-publish-fall`; not validated. Phase-acceleration spike + 3-frame debounce. Trigger a Lovelace alert, then escalate to a phone call if the person stays still for >2 min. Blueprint `07-fall-risk-escalation.yaml`. |
 | **Elderly inactivity anomaly** | `elderly_inactivity_anomaly` | Learns a person's normal day-pattern and flags deviations (e.g. usually up by 9 am, hasn't moved by 11 am). Blueprint `04-alert-elderly-inactivity-anomaly.yaml`. |
 | **Privacy-mode care monitoring** | `possible_distress` + `no_movement` + `someone_sleeping` | Run with `--privacy-mode` — heart rate and breathing values are stripped at the wire, but the *inferred states* keep working. Care staff sees "Distress detected" without ever seeing the underlying biometric numbers. The architectural win that makes RuView legally deployable in care homes. |
 | **Sleep apnea screening** | `breathing_rate_bpm` + `breathing_confidence` | Track per-night BPM histograms; flag dips that correlate with apnea events. |

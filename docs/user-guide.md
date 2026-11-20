@@ -453,7 +453,7 @@ A node only senses people whose movement crosses its path. A node that never see
 - `GET /api/v1/links` shows the mode, the followed node, the time to the next ranking, and each node's evidence.
 - `--fuse-all-links` (`RUVIEW_FUSE_ALL_LINKS=1`) restores the old behaviour of fusing every node.
 
-SYNTHETIC (scenario harness, three links on one room: one sees the person, one never does, one sees them through a noisy link): the ranking chose the link that sees the person (contrast 11.3, against 2.0 and 1.6). Following it held a still person in 5 of 5 rooms with 0 of 5 empty rooms occupied. Fusing all three held 4 of 5, with 1 of 5 empty rooms occupied. This is not yet MEASURED on hardware.
+SYNTHETIC (scenario harness, three links on one room: one sees the person, one never does, one sees them through a noisy link): the ranking chose the link that sees the person (contrast 11.3, against 2.0 and 1.6). Following it held a still person in 5 of 5 rooms with 0 of 5 empty rooms occupied. Fusing all three held 5 of 5, with 1 of 5 empty rooms occupied. This is not yet MEASURED on hardware.
 
 #### Fans and other machines
 

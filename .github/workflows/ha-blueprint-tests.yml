@@ -1,0 +1,45 @@
+name: HA Blueprint Tests
+
+# Runs the blueprint tests in examples/ha-blueprints/tests against a real
+# Home Assistant core (pinned in requirements.txt). The tests set entity
+# states directly, so every result is SYNTHETIC: they check the blueprint's
+# logic, not any sensor. The schema check (scripts/validate-ha-blueprints.py)
+# stays in mqtt-integration.yml, because it reads the MQTT planner.
+
+on:
+  pull_request:
+    paths:
+      - 'examples/ha-blueprints/**'
+      - '.github/workflows/ha-blueprint-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'examples/ha-blueprints/**'
+      - '.github/workflows/ha-blueprint-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ha-blueprint-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Blueprint tests on Home Assistant core (SYNTHETIC)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          # The pinned Home Assistant core needs Python 3.14.
+          python-version: '3.14'
+      - name: Install the pinned test harness
+        run: python -m pip install -r examples/ha-blueprints/tests/requirements.txt
+      - name: Run the blueprint tests
+        working-directory: examples/ha-blueprints/tests
+        run: python -m pytest -q -p no:cacheprovider --timeout 60

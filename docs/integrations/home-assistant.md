@@ -441,6 +441,7 @@ The 15 entities per node (9 raw signals and 6 semantic states, see the [Entity r
 | **"Wake up" routine** | `bed_exit` | When you get out of bed in the morning, turn on the bathroom heater, raise blinds, start the coffee. Blueprint `03-wake-routine-on-bed-exit.yaml`. |
 | **Meeting / focus mode** | `meeting_in_progress` | Multi-person presence in the office for >5 min → set a "Do Not Disturb" status, dim overhead lights, pause vacuum schedule. Blueprint `05-meeting-lights-presence-mode.yaml`. |
 | **Bathroom fan automation** | `bathroom_occupied` | Turn the exhaust fan on while a bathroom is occupied; turn it off 5 min after you leave. Blueprint `06-bathroom-fan-while-occupied.yaml`. |
+| **Occupancy with companion sensors** | `presence`, plus an mmWave sensor and BLE room presence you already have in HA | One "room occupied" helper: Wi-Fi catches walk-ins, mmWave holds people sitting still, BLE confirms a known phone or tag. The fusion runs in HA; RuView never receives the mmWave or BLE data. Blueprint `09-companion-fusion-occupancy.yaml`. |
 | **Forgotten kitchen / iron** | `presence` per room | "Stove on, kitchen empty for 10 min" → push notification + optional smart-plug cut-off. |
 | **Pet-only at home** | `n_persons == 0` for hours but `motion > 0` | Distinguish dog moving around from human presence — don't trigger empty-home automations during the day. |
 | **Sleep quality tracking** | `breathing_rate_bpm`, `heart_rate_bpm` (privacy off) | Push nightly averages to HA Statistics, graph in Grafana. No watch, no app. |

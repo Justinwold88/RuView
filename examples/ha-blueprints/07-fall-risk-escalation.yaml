@@ -6,6 +6,9 @@ blueprint:
     frequency + gait-instability proxy has reached a level worth
     investigating. Pairs with the longer-term ADR-079 P9 personalisation
     flow once available. Part of the ADR-115 §3.12 starter blueprint set.
+    Requires the server to run with --mqtt-publish-fall: the fall detector
+    behind this score has not been validated, so the sensor is not
+    announced by default. Do not rely on it to detect a fall.
   domain: automation
   source_url: https://github.com/ruvnet/RuView/blob/main/examples/ha-blueprints/07-fall-risk-escalation.yaml
   input:

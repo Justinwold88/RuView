@@ -11,6 +11,9 @@
 # dependencies are optional but improve readability — install via
 # HACS or fall back to the standard "entity" and "history-graph"
 # cards below as graceful degradation.
+#
+# The fall and fall-risk entities exist only when the server runs with
+# --mqtt-publish-fall (off by default: the fall detector is not validated).
 
 title: RuView — Care view
 path: ruview-care

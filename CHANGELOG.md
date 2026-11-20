@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Breaking: fall detection is hidden from Home Assistant by default
+  (plan item 2.6).** The `fall` event and the `fall_risk_elevated` sensor
+  (which counts recent falls) are announced only with `--mqtt-publish-fall`
+  (`RUVIEW_MQTT_PUBLISH_FALL=1`). The cog-ha-matter bridge follows the
+  default.
+  - The firmware's phase-acceleration fall detector has not been validated.
+  - Its flag can clear before any vitals packet carries it.
+  - The fall study (`docs/validation/fall-study-protocol.md`) measures both.
+  - Home Assistant installs that use those entities must set the flag to
+    keep them.
+
+  Default entity counts per node drop from 13 to 11, and to 10 with
+  `--privacy-mode`.
+
 - **Room fusion votes presence first (fix).** With several nodes fused
   (`--fuse-all-links`, or before best-link has ranked), `fuse_room` used to
   take a plurality over classes. Present nodes that disagreed on the level

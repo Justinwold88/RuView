@@ -10,6 +10,9 @@
 # server runs with --mqtt-publish-heart-rate (off by default: heart rate
 # is not validated). Without it, remove those cards.
 #
+# The fall and fall-risk entities likewise exist only with
+# --mqtt-publish-fall (off by default: the fall detector is not validated).
+#
 # This view shows the full 21-entity RuView surface for one room:
 # raw signals on the left (presence, HR, BR, motion, RSSI, fall risk
 # score) and semantic primitives on the right (sleeping, distress,

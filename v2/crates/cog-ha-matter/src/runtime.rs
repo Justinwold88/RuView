@@ -95,6 +95,9 @@ pub fn build_publisher_inputs(
         // Heart rate is not validated; the cog follows the server default
         // and does not announce it.
         publish_heart_rate: false,
+        // The fall detector is not validated (plan item 2.6); the cog follows
+        // the server default and does not announce it.
+        publish_fall: false,
         privacy_mode,
     };
 

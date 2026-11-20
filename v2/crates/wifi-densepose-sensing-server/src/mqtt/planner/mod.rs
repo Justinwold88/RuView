@@ -96,6 +96,7 @@ impl PublishPlanner {
                 cfg.privacy_mode,
                 cfg.publish_pose,
                 cfg.publish_heart_rate,
+                cfg.publish_fall,
                 &[],
             ),
             rates: cfg.rates,

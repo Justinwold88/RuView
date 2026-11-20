@@ -6,6 +6,9 @@
 #
 # Replace `_bedroom`, `_living`, `_kitchen`, `_office`, `_bathroom`
 # with your actual room slugs from the friendly_name resolution.
+#
+# The fall and fall-risk entities exist only when the server runs with
+# --mqtt-publish-fall (off by default: the fall detector is not validated).
 
 title: RuView — Whole house
 path: ruview-house

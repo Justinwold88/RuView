@@ -128,6 +128,7 @@ mod tests {
             rates: PublishRates::default(),
             publish_pose: false,
             publish_heart_rate: false,
+            publish_fall: false,
             privacy_mode: false,
         }
     }

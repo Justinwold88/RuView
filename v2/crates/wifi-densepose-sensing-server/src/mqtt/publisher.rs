@@ -235,6 +235,12 @@ async fn run(
              single-antenna CSI is not validated; do not use it for health or safety decisions"
         );
     }
+    if cfg.publish_fall {
+        otel_warn!(
+            "[mqtt] --mqtt-publish-fall: announcing fall detected and fall risk. The firmware \
+             fall detector is not validated; do not rely on it to detect a fall"
+        );
+    }
 
     // #898: one Home-Assistant device per node. Discovery is published lazily
     // the first time a snapshot for a given node_id arrives. The Instant is

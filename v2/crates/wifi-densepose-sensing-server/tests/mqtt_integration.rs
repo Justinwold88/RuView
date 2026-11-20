@@ -83,6 +83,8 @@ fn make_cfg(port: u16, privacy_mode: bool, label: &str) -> std::sync::Arc<MqttCo
         // These tests check the heart-rate wiring end to end, so they opt in
         // (it is off by default).
         publish_heart_rate: true,
+        // Opted in for the same reason: the fall wiring is checked end to end.
+        publish_fall: true,
         privacy_mode,
     })
 }

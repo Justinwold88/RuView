@@ -104,6 +104,13 @@ pub struct MqttArgs {
     #[arg(long, env = "RUVIEW_MQTT_PUBLISH_HEART_RATE", value_parser = parse_env_bool)]
     pub mqtt_publish_heart_rate: bool,
 
+    /// Announce the fall-detected and fall-risk entities (fall risk counts
+    /// recent fall detections) to Home Assistant. Off by default: the
+    /// firmware fall detector has not been validated, and plan item 2.6
+    /// keeps it hidden until the staged fall study reports.
+    #[arg(long, env = "RUVIEW_MQTT_PUBLISH_FALL", value_parser = parse_env_bool)]
+    pub mqtt_publish_fall: bool,
+
     /// Pose publish rate (Hz) when --mqtt-publish-pose is set
     #[arg(long, default_value = "1.0")]
     pub mqtt_rate_pose: f64,
@@ -290,6 +297,13 @@ pub struct Args {
     #[arg(long, env = "RUVIEW_MQTT_PUBLISH_HEART_RATE", value_parser = parse_env_bool)]
     pub mqtt_publish_heart_rate: bool,
 
+    /// Announce the fall-detected and fall-risk entities (fall risk counts
+    /// recent fall detections) to Home Assistant. Off by default: the
+    /// firmware fall detector has not been validated, and plan item 2.6
+    /// keeps it hidden until the staged fall study reports.
+    #[arg(long, env = "RUVIEW_MQTT_PUBLISH_FALL", value_parser = parse_env_bool)]
+    pub mqtt_publish_fall: bool,
+
     /// Pose publish rate (Hz) when --mqtt-publish-pose is set
     #[arg(long, default_value = "1.0")]
     pub mqtt_rate_pose: f64,
@@ -366,6 +380,7 @@ mod tests {
         assert_eq!(args.mqtt_rate_rssi, 0.1);
         assert!(!args.mqtt_publish_pose);
         assert!(!args.mqtt_publish_heart_rate, "heart rate must be opt-in");
+        assert!(!args.mqtt_publish_fall, "fall entities must be opt-in");
         assert_eq!(args.mqtt_rate_pose, 1.0);
         assert!(!args.mqtt_tls);
         assert!(args.mqtt_username.is_none());

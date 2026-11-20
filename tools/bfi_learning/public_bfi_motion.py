@@ -38,6 +38,10 @@ import download_public_bfi as download  # noqa: E402
 import public_bfi_decode  # noqa: E402
 
 PROTOCOL = "public-bfi-motion-1"
+PROTOCOLS = ("public-bfi-motion-1", "public-bfi-motion-2")
+# ADR-427: the only route by which a nonzero fragment number is admitted, and only in protocol 2.
+FRAGMENT_POLICY = "csi-bfi-har-complete-mpdu-v1"
+SIBLING_WINDOW_NS = 1_000_000_000
 WIRESHARK_VERSION = "4.2.2"
 MAX_FILE = download.MAX_FILE
 MAX_BLOCK = 1024 * 1024
@@ -228,10 +232,32 @@ def angle_change(previous, current):
     return float(np.abs(delta).mean())
 
 
-def admit_packets(packets, oracle_reports=ORACLE_REPORTS):
+def fcs_verified(data, frame):
+    """True if strip_radiotap removed, and therefore CRC-checked, exactly four FCS bytes."""
+    return len(data) - struct.unpack_from("<H", data, 2)[0] - len(frame) == 4
+
+
+def fragment_siblings(candidates):
+    """Positions of policy candidates sharing a sequence number with a different fragment number within 1 s."""
+    groups = collections.defaultdict(list)
+    for position, (_, timestamp, _, frame, pair, fragment) in enumerate(candidates):
+        groups[(pair, int.from_bytes(frame[22:24], "little") >> 4)].append((timestamp, fragment, position))
+    siblings = set()
+    for members in groups.values():
+        for timestamp, fragment, position in members:
+            if fragment and any(other != fragment and abs(t - timestamp) <= SIBLING_WINDOW_NS
+                                for t, other, _ in members):
+                siblings.add(position)
+    return siblings
+
+
+def admit_packets(packets, oracle_reports=ORACLE_REPORTS, fragment_policy=False):
     """Apply the nine frozen packet steps. Returns (counts, times, changes, oracle samples).
 
     changes[j] is the angle change from admitted report j-1 to j (changes[0] is None).
+    With fragment_policy (protocol 2, ADR-427), step 5 admits nonzero fragment numbers only
+    as complete, CRC-checked Action No Ack frames without fragment siblings; the oracle
+    samples then hold up to `oracle_reports` fragment-zero reports and as many policy reports.
     """
     counts = collections.Counter()
     candidates = []
@@ -257,10 +283,24 @@ def admit_packets(packets, oracle_reports=ORACLE_REPORTS):
         if fc & FC_GUARDS:
             counts["rejected_mac_guard_flags"] += 1
             continue
-        if frame[22] & 0x0F:
-            counts["quarantined_nonzero_fragment"] += 1
-            continue
-        candidates.append((index, timestamp, fc, frame, frame[10:16] + frame[4:10]))
+        fragment = frame[22] & 0x0F
+        if fragment_policy:
+            counts[f"fragment_number_{fragment:02d}"] += 1
+        if fragment:
+            if not fragment_policy:
+                counts["quarantined_nonzero_fragment"] += 1
+                continue
+            if (fc >> 4) & 0xF != 14:
+                counts["quarantined_policy_not_action_no_ack"] += 1
+                continue
+            if not fcs_verified(data, frame):
+                counts["quarantined_policy_no_fcs"] += 1
+                continue
+        candidates.append((index, timestamp, fc, frame, frame[10:16] + frame[4:10], fragment))
+    if fragment_policy:
+        siblings = fragment_siblings(candidates)
+        counts["quarantined_fragment_sibling"] += len(siblings)
+        candidates = [c for position, c in enumerate(candidates) if position not in siblings]
     pairs, first_seen = collections.Counter(), {}
     for position, candidate in enumerate(candidates):
         pairs[candidate[4]] += 1
@@ -268,9 +308,9 @@ def admit_packets(packets, oracle_reports=ORACLE_REPORTS):
     chosen = max(pairs, key=lambda pair: (pairs[pair], -first_seen[pair])) if pairs else None
     counts["candidate_pairs"] = len(pairs)
     retry_seen, payloads = collections.OrderedDict(), set()
-    times, changes, samples = [], [], []
+    times, changes, samples, policy_samples = [], [], [], []
     previous_angles = None
-    for index, timestamp, fc, frame, pair in candidates:
+    for index, timestamp, fc, frame, pair, fragment in candidates:
         if pair != chosen:
             counts["rejected_other_direction"] += 1
             continue
@@ -300,10 +340,14 @@ def admit_packets(packets, oracle_reports=ORACLE_REPORTS):
         changes.append(None if previous_angles is None else angle_change(previous_angles, angles))
         previous_angles = angles
         times.append(timestamp)
-        if len(samples) < oracle_reports:
+        if fragment:
+            counts["admitted_under_fragment_policy"] += 1
+            if len(policy_samples) < oracle_reports:
+                policy_samples.append((packets[index][3], report))
+        elif len(samples) < oracle_reports:
             samples.append((packets[index][3], report))
     counts["admitted_reports"] = len(times)
-    return counts, times, changes, samples
+    return counts, times, changes, samples + policy_samples
 
 
 # ------------------------------------------------------------ interval layer
@@ -403,7 +447,7 @@ def tool_version(executable, product):
 
 # ---------------------------------------------------------------- census
 
-def census_file(entry, path, tools, workdir):
+def census_file(entry, path, tools, workdir, fragment_policy=False):
     """One file's census record and its private eligible-interval features."""
     record = {"path": entry["path"], "group": entry["split"], "activity": entry["activity_code"],
               "participant": entry["participant_code"], "status": "ADMITTED"}
@@ -417,7 +461,7 @@ def census_file(entry, path, tools, workdir):
         record["inventory"] = inventory
         packets, record["conversion"] = lossless_conversion(path, source, tools["editcap"], workdir)
         del source
-        counts, times, changes, samples = admit_packets(packets)
+        counts, times, changes, samples = admit_packets(packets, fragment_policy=fragment_policy)
         del packets
         record["packets"] = dict(sorted(counts.items()))
         intervals = observed_intervals(times)
@@ -431,6 +475,9 @@ def census_file(entry, path, tools, workdir):
         record["eligible_seconds"] = len(features) * INTERVAL_NS / NS
         try:
             record["oracle"] = {"compared": oracle_compare(tools["tshark"], samples), "status": "MATCH"}
+            if fragment_policy:
+                record["oracle"]["policy_compared"] = sum(
+                    decoder.strip_radiotap(packet)[22] & 0x0F != 0 for packet, _ in samples)
         except DecodeError as error:
             record["oracle"] = {"compared": 0, "status": "FAILED", "reason": error.reason}
         if features:
@@ -572,7 +619,9 @@ def markdown(report):
              f"- Manifest SHA-256: `{report['manifest_sha256']}`",
              f"- Repository commit: `{report['repository_commit']}`",
              f"- Workflow run: {report['workflow_run']}",
-             f"- Wireshark: {report['tools']['wireshark']}", "",
+             f"- Wireshark: {report['tools']['wireshark']}",
+             f"- Fragment policy: {report.get('fragment_policy') or 'none (nonzero fragment numbers quarantined)'}",
+             "",
              "## Quality census", "",
              "| Group | Files | Admitted files | With eligible interval | Eligible intervals | Eligible seconds |",
              "|---|---|---|---|---|---|"]
@@ -598,7 +647,10 @@ def markdown(report):
     oracle = gate["oracle"]
     lines += ["", "## Decoder oracle", "",
               f"{oracle['reports_compared']} admitted reports from {oracle['files_compared']} files compared "
-              f"with {report['tools']['wireshark'].rstrip('.')}. Failures: {oracle['failures'] or 'none'}. "
+              f"with {report['tools']['wireshark'].rstrip('.')}"
+              + (f", {oracle['policy_reports_compared']} of them admitted under the fragment policy"
+                 if "policy_reports_compared" in oracle else "")
+              + f". Failures: {oracle['failures'] or 'none'}. "
               "Frequency axis not validated.", "",
               "## Benchmark admission", "",
               f"**{'ADMITTED' if gate['admitted'] else 'NOT ADMITTED'}**"
@@ -640,13 +692,24 @@ LIMITATIONS = [
     "Train (kitchen, day 1) and validation (classroom, day 3) differ in room and day; they are confounded.",
     "Held-out day-5 groups were inspected for quality only and never scored.",
     "BFI only: CSI is outside the pinned ADR-365 selection, so no BFI-versus-CSI comparison is made.",
-    "Nonzero-fragment frames are quarantined, as ADR-365 requires; this can reduce coverage.",
+    "FRAGMENT_LIMITATION",
     "Direction uses each file's most common transmitter/receiver pair, not a configured AP/client.",
     "Tone positions are ordinals; the frequency axis is not validated.",
 ]
 
 
-def run(root, tools, commit, run_url, log=print):
+def limitations(protocol):
+    fragment = ("Nonzero-fragment frames are quarantined, as ADR-365 requires; this can reduce coverage."
+                if protocol == PROTOCOLS[0] else
+                f"Nonzero-fragment frames are admitted only under the named policy {FRAGMENT_POLICY} (ADR-427): "
+                "complete, CRC-checked Action No Ack reports without fragment siblings. Not comparable to "
+                "version 1.")
+    return [fragment if item == "FRAGMENT_LIMITATION" else item for item in LIMITATIONS]
+
+
+def run(root, tools, commit, run_url, log=print, protocol=PROTOCOL):
+    require(protocol in PROTOCOLS, "unknown_protocol")
+    policy = protocol == "public-bfi-motion-2"
     manifest, _ = download.load_manifest(root / "source-manifest.json")
     receipt = json.loads(download.read_bounded(root / "download-receipt.json", download.MAX_RECEIPT))
     require(receipt.get("status") == "COMPLETED" and receipt.get("manifest_sha256") == download.MANIFEST_SHA256,
@@ -660,7 +723,8 @@ def run(root, tools, commit, run_url, log=print):
     with tempfile.TemporaryDirectory(prefix="bfi-motion-") as workdir:
         os.chmod(workdir, 0o700)
         for number, entry in enumerate(entries, 1):
-            record, file_features = census_file(entry, download.destination(root, entry["path"]), tools, workdir)
+            record, file_features = census_file(entry, download.destination(root, entry["path"]), tools, workdir,
+                                                fragment_policy=policy)
             records.append(record)
             features.append(file_features)
             detail = record.get("reason") or f"eligible_intervals={record.get('eligible_intervals', 0)}"
@@ -668,7 +732,15 @@ def run(root, tools, commit, run_url, log=print):
     groups = summarize(records, downloaded_groups)
     gate = admission(groups, records)
     scores = score(features, records) if gate["admitted"] else None
-    return {"protocol": PROTOCOL, "evidence": "MEASURED",
+    if policy:
+        policy_compared = sum(r.get("oracle", {}).get("policy_compared", 0) for r in records)
+        gate["oracle"]["policy_reports_compared"] = policy_compared
+        if policy_compared == 0:
+            gate["reasons"].append("fragment_policy_oracle_compared_nothing")
+            gate["admitted"] = False
+            scores = None
+    return {"protocol": protocol, "fragment_policy": FRAGMENT_POLICY if policy else None,
+            "evidence": "MEASURED",
             "data": "public CSI-BFI-HAR BFI captures (GPL-3.0 dataset; data not redistributed)",
             "dataset_revision": download.REVISION, "manifest_sha256": download.MANIFEST_SHA256,
             "repository_commit": commit, "workflow_run": run_url,
@@ -677,7 +749,7 @@ def run(root, tools, commit, run_url, log=print):
                       "numpy": np.__version__},
             "processing_seconds": round(time.monotonic() - started, 1),
             "census": {"groups": groups, "files": records},
-            "admission": gate, "scores": scores, "limitations": LIMITATIONS}
+            "admission": gate, "scores": scores, "limitations": limitations(protocol)}
 
 
 def main(argv=None):
@@ -689,13 +761,15 @@ def main(argv=None):
     parser.add_argument("--editcap", default="editcap")
     parser.add_argument("--commit", default=os.environ.get("GITHUB_SHA", "unknown"))
     parser.add_argument("--run-url", default="local run")
+    parser.add_argument("--protocol", choices=PROTOCOLS, default=PROTOCOL,
+                        help="public-bfi-motion-2 adds the ADR-427 fragment policy")
     args = parser.parse_args(argv)
     try:
         tools = {name: shutil.which(getattr(args, name)) for name in ("tshark", "editcap")}
         require(all(tools.values()), "wireshark_tools_not_found")
         tools["version"] = tool_version(tools["tshark"], "TShark")
         tools["editcap_version"] = tool_version(tools["editcap"], "Editcap")
-        report = run(download.private_root(args.data), tools, args.commit, args.run_url)
+        report = run(download.private_root(args.data), tools, args.commit, args.run_url, protocol=args.protocol)
     except (DecodeError, download.DownloadError, OSError, ValueError) as error:
         reason = getattr(error, "reason", None) or getattr(error, "code", None) or str(error)
         print(json.dumps({"status": "ERROR", "reason": reason}))

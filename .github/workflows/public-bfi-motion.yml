@@ -7,6 +7,14 @@ name: Public BFI Motion Test
 # only aggregate numbers are uploaded.
 on:
   workflow_dispatch:
+    inputs:
+      protocol:
+        description: 'Frozen protocol: public-bfi-motion-1 (strict ADR-365) or public-bfi-motion-2 (ADR-427 fragment policy)'
+        type: choice
+        options:
+          - public-bfi-motion-2
+          - public-bfi-motion-1
+        default: public-bfi-motion-2
 
 permissions:
   contents: read
@@ -43,9 +51,10 @@ jobs:
       - name: Census, decoder oracle and score
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PROTOCOL: ${{ inputs.protocol }}
         run: |
           mkdir -p "$RUNNER_TEMP/report"
-          python -B tools/bfi_learning/public_bfi_motion.py --data "$RUNNER_TEMP/public-bfi" \
+          python -B tools/bfi_learning/public_bfi_motion.py --protocol "$PROTOCOL" --data "$RUNNER_TEMP/public-bfi" \
             --report "$RUNNER_TEMP/report/public-bfi-motion.md" \
             --json "$RUNNER_TEMP/report/public-bfi-motion.json" \
             --commit "$GITHUB_SHA" --run-url "$RUN_URL"

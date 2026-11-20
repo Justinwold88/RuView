@@ -158,7 +158,11 @@ on the pinned public captures, following ADR-365 strictly. The census covers
 all four partition/view groups; held-out groups are never scored.
 [public_bfi_motion.py](public_bfi_motion.py) needs Wireshark 4.2.2 (`tshark`,
 `editcap`) and runs in the manual `public-bfi-motion.yml` workflow. Only
-aggregate numbers leave the runner.
+aggregate numbers leave the runner. Protocol version 2
+([PUBLIC-BFI-MOTION-2.md](PUBLIC-BFI-MOTION-2.md), `--protocol
+public-bfi-motion-2`) adds the ADR-427 policy, which admits complete,
+CRC-checked frames that carry nonzero fragment bits; version 1 stays
+reproducible.
 
 ```bash
 python tools/bfi_learning/download_public_bfi.py --include-heldout --output /private/bfi

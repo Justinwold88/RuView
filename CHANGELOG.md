@@ -79,6 +79,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a still person in 5 of 5 rooms with 0 of 5 empty rooms occupied, against
   4 of 5 and 1 of 5 when fusing all. Not yet MEASURED on hardware.
 
+- **Public BFI test, protocol version 2 (ADR-427).** In the public BFI
+  captures, 15 of 16 feedback frames carry nonzero fragment bits.
+  - **Policy:** the named dataset policy `csi-bfi-har-complete-mpdu-v1`
+    admits such a frame only if it is a complete, single-segment 1,003-byte
+    Action No Ack report with a verified FCS and no fragment siblings (same
+    sequence number, different fragment number, within 1 s).
+  - **Oracle:** the tshark oracle also checks 4 policy frames per file.
+  - **Unchanged:** the live capture path and strict protocol 1.
+  - **Run it:** the workflow gains a `protocol` input, and
+    `tools/bfi_learning/PUBLIC-BFI-MOTION-2.md` freezes version 2 before
+    its first run.
+
 - **A still person stays present while their breathing is periodic (plan
   item 1.3).** Each ESP32 node now tracks breathing evidence: the peak of
   the 0.1-0.5 Hz band against the median of 0.5-2 Hz, over the last 20 s.

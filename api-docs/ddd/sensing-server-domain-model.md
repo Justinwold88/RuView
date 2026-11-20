@@ -821,7 +821,7 @@ crates/wifi-densepose-sensing-server/
     +-- training_api.rs    # Training Pipeline bounded context
     +-- rvf_container.rs   # RVF format ACL (RvfReader, RvfBuilder)
     +-- rvf_pipeline.rs    # Progressive loader for model inference
-    +-- vital_signs.rs     # Vital sign detection from CSI phase
+    +-- vital_signs.rs     # Re-exports the vital-sign detector (wifi-densepose-vitals)
     +-- dataset.rs         # Dataset loading for training
     +-- trainer.rs         # Core training loop implementation
     +-- embedding.rs       # Contrastive embedding extraction

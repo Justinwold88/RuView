@@ -168,6 +168,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `tools/bfi_learning/PUBLIC-BFI-MOTION-2.md` freezes version 2 before
     its first run.
 
+- **Public BFI test, protocol version 2 result: still not admitted.** Run
+  [44695427917](https://github.com/Justinwold88/RuView/actions/runs/44695427917)
+  (MEASURED on public data, policy `csi-bfi-har-complete-mpdu-v1`). Every
+  file passed admission, and the decoder oracle matched 1,293 reports (381
+  admitted under the policy) with no failures. The policy's sibling rule
+  still quarantines almost all nonzero-fragment frames: 1.2% were admitted in
+  train and under 0.3% elsewhere. Train recordings with an eligible interval
+  rose from 6 to 15 of 60; validation stayed at 11. 37 group/activity cells
+  have fewer than 2 such recordings, so no detector was scored. Details in
+  `tools/bfi_learning/PUBLIC-BFI-MOTION-2.md`.
+
 - **A still person stays present while their breathing is periodic (plan
   item 1.3).** Each ESP32 node now tracks breathing evidence: the peak of
   the 0.1-0.5 Hz band against the median of 0.5-2 Hz, over the last 20 s.

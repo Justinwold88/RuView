@@ -68,4 +68,52 @@ python tools/bfi_learning/public_bfi_motion.py --protocol public-bfi-motion-2 \
 
 ## Results
 
-Not yet run.
+**Run 1 (2026-11-20): benchmark NOT ADMITTED. MEASURED** on public data,
+under the policy `csi-bfi-har-complete-mpdu-v1`. Not comparable to version 1.
+- Workflow run [44695427917](https://github.com/Justinwold88/RuView/actions/runs/44695427917), commit `98fc1b28`.
+- Dataset revision `c3013b3e…`, manifest SHA-256 `c2db11f7…`, Wireshark 4.2.2.
+
+**Every file passed file admission.**
+- All 240 files passed integrity, the PCAPNG inventory and lossless conversion.
+- No candidate failed the policy's subtype or FCS rules.
+- **Decoder oracle:** 1,293 admitted reports from all 240 files matched tshark
+  4.2.2 exactly; 381 of them were admitted under the policy.
+
+**The policy admits few of the nonzero-fragment frames.** Almost all of them
+have a fragment sibling within 1 s, so they stay quarantined. Of the
+nonzero-fragment candidates, 1.2% were admitted in train, 0.3% in
+validation and under 0.01% in the held-out groups:
+
+| Group | Admitted reports | Of which under the policy | Quarantined (fragment sibling) | Admitted share |
+|---|---|---|---|---|
+| train | 29,988 | 4,552 | 376,999 | 7.4% |
+| validation | 27,112 | 1,089 | 389,776 | 6.5% |
+| heldout_same_device | 66,328 | 40 | 993,804 | 6.3% |
+| heldout_other_device_view | 68,707 | 7 | 1,030,372 | 6.3% |
+
+In every group, each raw fragment number from 0 to 15 holds between 6.2% and
+6.3% of the candidates. With 16 values that are equally common, almost every
+12-bit sequence number has siblings, which is what the sibling rule rejects.
+This fits the version 1 observation that the low four bits of Sequence
+Control behave like a counter. It is an observation, not a reason to admit
+the frames.
+
+**Too few intervals survive.**
+
+| Group | Recordings with an eligible interval | Eligible intervals | Activities with fewer than 2 such recordings |
+|---|---|---|---|
+| train | 15 of 60 (version 1: 6) | 31 | 17 of 20 (all but A, C and I) |
+| validation | 11 of 60 (version 1: 11) | 139 | 19 of 20 (all but J) |
+| heldout_same_device | 53 of 60 | 1,065 | 1 (B) |
+| heldout_other_device_view | 56 of 60 | 1,109 | 0 |
+
+Every activity needs 2 such recordings in every group, so the benchmark is
+not admitted and no detector was scored. The held-out groups were inspected
+for quality only.
+
+**What would change it.** Only a different, reviewed dataset policy: one
+that treats all 16 bits of Sequence Control as a counter instead of a
+sequence and fragment number. That would need another ADR-365 amendment and a
+protocol version 3, frozen before its run. Whether to do that is the study
+owner's decision. Relaxing the sibling rule or the interval rule inside
+version 2 is not allowed.

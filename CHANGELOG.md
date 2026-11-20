@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Public BFI motion test, frozen before any data was seen (plan item
+  1.6).** New manual workflow `public-bfi-motion.yml` downloads the pinned
+  public CSI-BFI-HAR BFI captures onto the runner and follows ADR-365
+  strictly:
+  - every file is inventoried, converted with editcap and proved lossless
+  - nonzero-fragment frames are quarantined
+  - the decoder is checked against tshark 4.2.2
+  - the five-second interval census runs on all four partition/view groups
+
+  Only if every activity has two eligible recordings in every group does it
+  fit a one-number angle-change threshold on train and score moving vs
+  still on validation, against timing-only and constant-class controls.
+  Held-out groups are never scored, and only aggregate numbers leave the
+  runner. The protocol is frozen in `tools/bfi_learning/PUBLIC-BFI-MOTION.md`.
+  No results yet. CSI is outside the pinned selection, so there is no
+  BFI-versus-CSI comparison.
+
 - **Fans no longer read as people (plan item 1.5, non-human filter v0).**
   Each ESP32 node looks once a second for one narrow spectral line in
   0.5-10 Hz across its last 5 s of amplitudes. A line that holds its

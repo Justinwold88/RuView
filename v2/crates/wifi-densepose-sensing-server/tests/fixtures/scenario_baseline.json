@@ -18,7 +18,7 @@
   "walk_detect_pct": {
     "walk_s0": 100.0,
     "walk_s1": 100.0,
-    "walk_s2": 100.0,
+    "walk_s2": 99.82,
     "walk_s3": 100.0,
     "walk_s4": 100.0
   },
@@ -254,11 +254,11 @@
         "empty_s2": 0.0,
         "empty_s3": 0.0,
         "empty_s4": 0.0,
-        "walk_s0": 100.0,
-        "walk_s1": 100.0,
-        "walk_s2": 100.0,
-        "walk_s3": 100.0,
-        "walk_s4": 100.0
+        "walk_s0": 99.73,
+        "walk_s1": 99.91,
+        "walk_s2": 99.73,
+        "walk_s3": 99.77,
+        "walk_s4": 99.73
       },
       "calibrated_pct": {
         "empty_s0": 0.0,
@@ -408,7 +408,7 @@
         "empty_s4": 3.86,
         "walk_s0": 100.0,
         "walk_s1": 100.0,
-        "walk_s2": 100.0,
+        "walk_s2": 99.82,
         "walk_s3": 100.0,
         "walk_s4": 100.0
       },
@@ -418,11 +418,11 @@
         "empty_s2": 0.0,
         "empty_s3": 0.0,
         "empty_s4": 0.0,
-        "walk_s0": 100.0,
-        "walk_s1": 100.0,
-        "walk_s2": 100.0,
-        "walk_s3": 100.0,
-        "walk_s4": 100.0
+        "walk_s0": 99.73,
+        "walk_s1": 99.77,
+        "walk_s2": 99.55,
+        "walk_s3": 99.68,
+        "walk_s4": 99.64
       },
       "default_entry_secs": {
         "enter_still_s0": 0.55,
@@ -535,6 +535,36 @@
       "still_person_held_without_false_presence": 4,
       "walk_ins_caught": 5,
       "empty_rooms": 5,
+      "walk_in_rooms": 5
+    }
+  },
+  "fans": {
+    "slow fan": {
+      "empty_rooms_read_occupied": 1,
+      "empty_rooms": 5,
+      "still_person_held_without_false_presence": 4,
+      "walk_ins_caught": 5,
+      "walk_in_rooms": 5
+    },
+    "strong fan": {
+      "empty_rooms_read_occupied": 4,
+      "empty_rooms": 5,
+      "still_person_held_without_false_presence": 0,
+      "walk_ins_caught": 5,
+      "walk_in_rooms": 5
+    },
+    "typical box fan": {
+      "empty_rooms_read_occupied": 0,
+      "empty_rooms": 5,
+      "still_person_held_without_false_presence": 5,
+      "walk_ins_caught": 5,
+      "walk_in_rooms": 5
+    },
+    "weak fan": {
+      "empty_rooms_read_occupied": 2,
+      "empty_rooms": 5,
+      "still_person_held_without_false_presence": 4,
+      "walk_ins_caught": 5,
       "walk_in_rooms": 5
     }
   }

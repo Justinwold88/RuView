@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Fans no longer read as people (plan item 1.5, non-human filter v0).**
+  Each ESP32 node looks once a second for one narrow spectral line in
+  0.5-10 Hz across its last 5 s of amplitudes. A line that holds its
+  frequency for 10 s flags a periodic interferer such as a fan; the node
+  then subtracts its whole motion baseline (instead of 70%) so the fan's
+  steady motion is removed and a person's extra motion still shows, and no
+  presence hold starts while a line is being confirmed. A fan stronger
+  than 3.5x the presence threshold would hide people too, so it is only
+  reported. `GET /api/v1/links` adds per-node `periodic_interference`.
+  SYNTHETIC (scenario harness, typical box fan at -15 dB / 4.2 Hz): empty
+  rooms occupied 3 of 5 -> 0 of 5, still person held 4 of 5 -> 5 of 5,
+  walk-ins 5 of 5 -> 5 of 5; no fan case gets worse. Oscillating fans'
+  slow sweep, pets and robot vacuums are not handled. Not yet MEASURED on
+  hardware.
+
 - **Best-link mode: the room follows the node that sees people (plan item
   1.4).** With several ESP32 nodes, the room verdict now follows one node
   instead of a vote across all of them: the node with the highest contrast

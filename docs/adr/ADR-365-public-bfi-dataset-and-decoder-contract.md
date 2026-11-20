@@ -114,6 +114,9 @@ Use `test_download_public_bfi.py` and `test_public_bfi_decode.py` under
 in the [decode audit](../../tools/bfi_learning/PUBLIC-BFI-DECODE.md) and
 [benchmark protocol](../../tools/bfi_learning/RESEARCH-NEXT.md).
 
+- Amended by [ADR-427](ADR-427-csi-bfi-har-complete-mpdu-fragment-policy.md): the named
+  dataset policy `csi-bfi-har-complete-mpdu-v1` admits complete, CRC-checked frames with
+  nonzero fragment bits, only in protocol `public-bfi-motion-2`. The live guards are unchanged.
 - Depends on [ADR-364](ADR-364-bfi-capture-admission-and-continuity.md)'s distinction
   between packet validity and coverage.
 - Preserves [ADR-120](ADR-120-bfld-privacy-class-and-hash-rotation.md).

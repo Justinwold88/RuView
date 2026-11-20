@@ -75,12 +75,16 @@ def pcapng(packets, endian="<", tsresol=9, snaplen=0, extra_idb=False, tsoffset=
     return b"".join(out)
 
 
-def recording(seconds=20, rate=10, moving=True, start_ns=1_700_000_000 * NS):
-    """Evenly spaced feedback; 'moving' changes the angles between reports."""
+def recording(seconds=20, rate=10, moving=True, start_ns=1_700_000_000 * NS, counter_bits=False):
+    """Evenly spaced feedback; 'moving' changes the angles between reports.
+
+    counter_bits fills the fragment-number bits with a 0-15 counter, as in the public captures.
+    """
     out = []
     for j in range(seconds * rate):
         rows = rows_for(j if moving else 0)
-        out.append((start_ns + j * NS // rate, packet(body(rows), seq=j % 4096)))
+        out.append((start_ns + j * NS // rate,
+                    packet(body(rows), seq=j % 4096, frag=j % 16 if counter_bits else 0)))
     return out
 
 
@@ -192,6 +196,59 @@ class AdmissionTests(unittest.TestCase):
         self.assertAlmostEqual(motion.angle_change(a, b), (2 * math.pi / 512) / 4)
         c = motion.radians([(0, 0, 127, 0)] * 234)
         self.assertAlmostEqual(motion.angle_change(a, c), (127 * 2 * math.pi / 512) / 4)
+
+
+class FragmentPolicyTests(unittest.TestCase):
+    """ADR-427 csi-bfi-har-complete-mpdu-v1, used only by protocol public-bfi-motion-2."""
+
+    def admit(self, frames, policy=True):
+        raw = [(t, len(p), len(p), p) for t, p in frames]
+        return motion.admit_packets(raw, fragment_policy=policy)
+
+    def test_strict_mode_is_unchanged(self):
+        counts, times, _, _ = self.admit(recording(seconds=2, counter_bits=True), policy=False)
+        self.assertEqual((counts["admitted_reports"], counts["quarantined_nonzero_fragment"]), (2, 18))
+        self.assertNotIn("fragment_number_00", counts)
+
+    def test_policy_admits_complete_crc_checked_action_no_ack_frames(self):
+        counts, times, _, samples = self.admit(recording(seconds=2, counter_bits=True))
+        self.assertEqual(counts["admitted_reports"], 20)
+        self.assertEqual(counts["admitted_under_fragment_policy"], 18)
+        self.assertEqual(counts["fragment_number_00"], 2)
+        self.assertEqual(counts["fragment_number_15"], 1)
+        frags = [motion.decoder.strip_radiotap(p)[22] & 0x0F for p, _ in samples]
+        self.assertEqual(frags, [0, 0, 1, 2, 3, 4])  # 2 fragment-zero reports, then 4 policy reports
+
+    def test_policy_refusals(self):
+        base = 10 * NS
+        frames = [
+            (base, packet(body(rows_for(1)), seq=1, frag=3)),                          # admitted
+            (base + 1, packet(body(rows_for(2)), seq=2, frag=3, fc=0x00d0)),            # Action, not No Ack
+            (base + 2, packet(body(rows_for(3)), seq=3, frag=3, fcs=False)),            # no FCS
+            (base + 3, packet(body(rows_for(4)), seq=4, frag=3, corrupt_fcs=True)),     # bad FCS
+            (base + 4, packet(body(rows_for(5)) + b"\x00", seq=5, frag=3)),            # extended body
+            (base + 5, packet(body(rows_for(6))[:-1], seq=6, frag=3)),                  # truncated body
+            (base + 6, packet(body(rows_for(7)), seq=7, frag=3, fc=0x04e0)),            # More Fragments set
+        ]
+        counts, times, _, _ = self.admit(frames)
+        self.assertEqual(times, [base])
+        expected = {"quarantined_policy_not_action_no_ack": 1, "quarantined_policy_no_fcs": 1,
+                    "rejected_fcs_mismatch": 1, "rejected_body_length": 2, "rejected_mac_guard_flags": 1,
+                    "admitted_under_fragment_policy": 1}
+        for key, value in expected.items():
+            self.assertEqual(counts[key], value, key)
+
+    def test_fragment_siblings_stay_quarantined(self):
+        base = 10 * NS
+        frames = [
+            (base, packet(body(rows_for(1)), seq=9, frag=1)),
+            (base + NS // 2, packet(body(rows_for(2)), seq=9, frag=2)),    # sibling of the first
+            (base + NS // 2 + 1, packet(body(rows_for(3)), seq=9, frag=0)),  # fragment zero: v1 rules
+            (base + 5 * NS, packet(body(rows_for(4)), seq=9, frag=3)),     # same seq, 4.5 s later: not a sibling
+        ]
+        counts, times, _, _ = self.admit(frames)
+        self.assertEqual(counts["quarantined_fragment_sibling"], 2)
+        self.assertEqual(times, [base + NS // 2 + 1, base + 5 * NS])
 
 
 class IntervalTests(unittest.TestCase):
@@ -312,6 +369,26 @@ class WiresharkTests(unittest.TestCase):
         with self.assertRaises(motion.DecodeError) as caught:
             motion.oracle_compare(tshark, [(packet_bytes, wrong)])
         self.assertEqual(caught.exception.reason, "oracle_snr_mismatch")
+
+    def test_policy_frames_match_tshark(self):
+        raw = [(t, len(p), len(p), p) for t, p in recording(seconds=1, counter_bits=True)]
+        _, _, _, samples = motion.admit_packets(raw, fragment_policy=True)
+        self.assertEqual(motion.oracle_compare(shutil.which("tshark"), samples), 5)
+
+    def test_census_file_with_the_fragment_policy(self):
+        raw = pcapng(recording(seconds=12, moving=True, counter_bits=True))
+        import hashlib
+        entry = {"path": "HAR-1/BFI/M1/A_1_M1_P1.pcapng", "split": "train", "activity_code": "A",
+                 "participant_code": "P1", "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+        tools = {"tshark": shutil.which("tshark"), "editcap": shutil.which("editcap")}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "file.pcapng"
+            path.write_bytes(raw)
+            strict, _ = motion.census_file(entry, path, tools, directory)
+            policy, _ = motion.census_file(entry, path, tools, directory, fragment_policy=True)
+        self.assertEqual(strict["eligible_intervals"], 0)
+        self.assertEqual(policy["eligible_intervals"], 2)
+        self.assertEqual(policy["oracle"], {"compared": 8, "status": "MATCH", "policy_compared": 4})
 
     def test_census_file_end_to_end(self):
         raw = pcapng(recording(seconds=12, moving=True))

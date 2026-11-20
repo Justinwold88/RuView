@@ -51,6 +51,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   No results yet. CSI is outside the pinned selection, so there is no
   BFI-versus-CSI comparison.
 
+- **Public BFI motion test, first result: benchmark not admitted
+  (MEASURED).** All 240 public captures passed integrity, inventory,
+  lossless conversion and the MAC guards. The decoder matched tshark 4.2.2
+  on 912 reports. But ADR-365's quarantine of frames with a nonzero
+  fragment number removes 93.8% of reports, and the train and validation
+  groups keep an eligible 5-second interval in only 6 and 11 of 60
+  recordings, so no detector was scored. The quarantined share is 1/16 in
+  every group, which suggests those bits are not fragment numbers. Admitting
+  them needs an ADR-365 dataset policy first. Details are in
+  `tools/bfi_learning/PUBLIC-BFI-MOTION.md`.
+
 - **Fans no longer read as people (plan item 1.5, non-human filter v0).**
   Each ESP32 node looks once a second for one narrow spectral line in
   0.5-10 Hz across its last 5 s of amplitudes. A line that holds its

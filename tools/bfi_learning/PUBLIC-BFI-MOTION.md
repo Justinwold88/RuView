@@ -223,4 +223,53 @@ statistics are reported too, so readers can regroup.
 
 ## Results
 
-Not yet run. The first run's numbers, with its workflow run link, go here.
+**Run 1 (2026-11-20): benchmark NOT ADMITTED. MEASURED** on public data.
+- Workflow run [44667646386](https://github.com/Justinwold88/RuView/actions/runs/44667646386), commit `06a68c72`.
+- The rerun [44672983475](https://github.com/Justinwold88/RuView/actions/runs/44672983475) at commit `53537b57` only adds printing the report to the log. Its census is identical.
+- Dataset revision `c3013b3e…`, manifest SHA-256 `c2db11f7…`, Wireshark 4.2.2.
+
+**Every file passed file admission.**
+- All 240 files matched their manifest hashes and passed the PCAPNG inventory.
+- Every file converted losslessly with editcap.
+- No packet failed radiotap/FCS or the MAC guards, and no file held other traffic.
+- **Decoder oracle:** 912 admitted reports from 233 files matched tshark 4.2.2 exactly (controls, SNR and all angle integers). The other 7 files had no admitted report.
+
+**The fragment quarantine removes about 94% of reports.**
+
+| Group | Admitted reports | Quarantined (nonzero fragment number) | Admitted share |
+|---|---|---|---|
+| train | 25,436 | 381,551 | 6.2% |
+| validation | 26,023 | 390,865 | 6.2% |
+| heldout_same_device | 66,288 | 993,844 | 6.3% |
+| heldout_other_device_view | 68,700 | 1,030,379 | 6.3% |
+
+In every group the admitted share is within 0.01 percentage points of 1/16.
+That is what four uniformly distributed bits would give: the low four bits of
+Sequence Control behave like a counter here, not like fragment numbers. This
+is an observation for a future dataset policy, not a reason to admit the
+frames. ADR-365 still requires a reviewed policy first.
+
+**Too few intervals survive.** With what is left, few 5-second intervals keep 20 reports without a gap above 1 s:
+
+| Group | Recordings with an eligible interval | Eligible intervals | Activities with fewer than 2 such recordings |
+|---|---|---|---|
+| train | 6 of 60 | 12 | 19 of 20 (all but I) |
+| validation | 11 of 60 | 140 | 19 of 20 (all but J) |
+| heldout_same_device | 53 of 60 | 1,060 | 1 (B) |
+| heldout_other_device_view | 55 of 60 | 1,107 | 0 |
+
+Every activity needs 2 such recordings in every group, so the benchmark is not
+admitted and no detector was scored. This is the result ADR-365 asks for
+rather than a failure to work around. The label set was not shrunk, and the
+quarantine was not relaxed.
+
+**What would change it.**
+- **An explicit dataset policy for the nonzero-fragment frames.** The decode
+  audit allows "a later separately reviewed dataset-specific adapter" that
+  accepts already-complete MPDUs, under a named policy with an oracle for the
+  original bytes. That needs an ADR-365 amendment, then a new protocol version
+  and a new run. The held-out groups would still not be scored until that
+  protocol freezes.
+- **Not by changing the interval rule.** Even the day-5 groups, which are
+  denser, lose some activities, and train and validation would still be far
+  short.

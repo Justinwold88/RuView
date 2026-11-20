@@ -147,13 +147,13 @@
     {
       "id": "RuView#593",
       "title": "vital_signs.rs uses circular variance for wrapped atan2 phase values",
-      "files": ["v2/crates/wifi-densepose-sensing-server/src/vital_signs.rs"],
+      "files": ["v2/crates/wifi-densepose-vitals/src/detector.rs"],
       "require": [
         "phase_circular_variance",
         "standard circular variance (1 - mean resultant length)",
         "test_phase_variance_handles_wraparound"
       ],
-      "rationale": "Phases come from atan2 and are wrapped to (-pi, pi]. The original linear mean/variance treated two phases straddling +/-pi (physically ~0 rad apart) as ~2*pi apart, producing variance ~pi^2 instead of ~1e-6 and feeding that noise straight into the heart-rate FFT buffer. Caused jumpy vitals in #519 and +/-15 BPM jitter in #485.",
+      "rationale": "Phases come from atan2 and are wrapped to (-pi, pi]. The original linear mean/variance treated two phases straddling +/-pi (physically ~0 rad apart) as ~2*pi apart, producing variance ~pi^2 instead of ~1e-6 and feeding that noise straight into the heart-rate FFT buffer. Caused jumpy vitals in #519 and +/-15 BPM jitter in #485. Plan item 4.1 moved the server's vital_signs.rs verbatim into the vitals crate as detector.rs (the server re-exports it), so the marker follows the file.",
       "ref": "https://github.com/ruvnet/RuView/issues/593"
     },
     {

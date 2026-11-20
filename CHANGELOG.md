@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Security: wasmtime 36.0.20 → 36.0.23.** This clears the three advisories
+  that failed `Rust Dependency Audit` on every PR since 2026-11-18:
+  RUSTSEC-2026-0566, -0569 and -0571 (unbounded host memory growth in
+  wasmtime-wasi and wasmtime-wasi-http, and a panic in
+  `Caller::get_module_export`), all fixed in 36.0.21. It is a semver-patch
+  update of the optional `homecore-plugins` sandbox. The Cargo.toml minimum
+  is raised to 36.0.23, so the lockfile cannot fall back. The `cargo audit`
+  warnings (unmaintained or unsound crates) do not fail the job and are
+  unchanged.
+
 - **Real-home dataset protocol and tools (plan item 2.3, PROPOSED).**
   `docs/validation/real-home-dataset-protocol.md` defines how the 7-day
   labelled home recordings behind Gate G2 are made:

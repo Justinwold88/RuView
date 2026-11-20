@@ -123,6 +123,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slow sweep, pets and robot vacuums are not handled. Not yet MEASURED on
   hardware.
 
+- **Public BFI test, protocol version 3 written up (ADR-428, PROPOSED; not
+  yet run).** Protocol 2 still could not admit the public benchmark: its
+  sibling rule refused almost every nonzero-fragment frame, because the 16
+  fragment-number values are equally common and no frame sets More
+  Fragments. ADR-428 defines the named policy
+  `csi-bfi-har-seqctl-counter-v1`, which reads all 16 Sequence Control bits
+  as one counter. A complete, CRC-valid Action No Ack report with a nonzero
+  fragment number is admitted when no feedback frame in its file sets More
+  Fragments and no frame from the same pair repeats its 16-bit value within
+  1 s. A step histogram of the 16-bit value is reported as a diagnostic. New
+  workflow choice `public-bfi-motion-3`; the frozen protocol is
+  `tools/bfi_learning/PUBLIC-BFI-MOTION-3.md`. It runs only after the study
+  owner approves ADR-428. Protocols 1 and 2 are unchanged.
+
 - **Fall study protocol and tools (plan item 2.6, PROPOSED).**
   `docs/validation/fall-study-protocol.md` covers:
   - safety rules for staged falls: a landing mat, a spotter, exclusions and

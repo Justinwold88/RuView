@@ -138,7 +138,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - SYNTHETIC (scenario harness): every accuracy figure in the report is
     identical before and after.
   - The crate's older `BreathingExtractor` / `HeartRateExtractor` pipeline,
-    used by `ruview-kernel` and the Python bindings, is unchanged here.
+    used by `ruview-kernel` and the Python bindings, is unchanged here. The
+    harness report now compares it with the detector on the 72 vitals
+    scenarios of seed sets 0–2 (SYNTHETIC, informational, not ratcheted).
+    Breathing error is 0.03 / 0.04 / 0.08 BPM for the detector against
+    9.08 / 11.59 / 8.97 BPM for the older pipeline at −10 / −15 / −20 dB,
+    and the older pipeline gave no estimate in 12, 16 and 22 of 24
+    scenarios. Heart rate is near chance for both.
 
 - **Best-link mode: the room follows the node that sees people (plan item
   1.4).** With several ESP32 nodes, the room verdict now follows one node

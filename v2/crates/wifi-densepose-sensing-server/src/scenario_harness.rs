@@ -1312,6 +1312,144 @@ fn regressions(now: &Metrics, base: &Metrics) -> Vec<String> {
     bad
 }
 
+/// Plan item 4.1 (review R11): the vitals crate holds a second, older
+/// pipeline (`CsiVitalPreprocessor` + `BreathingExtractor` +
+/// `HeartRateExtractor`, used by `ruview-kernel` and the Python bindings).
+/// Run it on the same vitals scenarios as the detector, in all seed sets,
+/// with `ruview-kernel`'s default settings, and score both the same way:
+/// the median of the last 15 s, against the true rate. Reported only; it is
+/// not part of [`Metrics`], so it is never ratcheted.
+fn older_pipeline_comparison() -> String {
+    use wifi_densepose_vitals::{
+        BreathingExtractor, CsiFrame, CsiVitalPreprocessor, HeartRateExtractor, VitalStatus,
+    };
+    #[derive(Default)]
+    struct Errors {
+        detector_br: Vec<f64>,
+        detector_br_missing: usize,
+        older_br: Vec<f64>,
+        older_br_missing: usize,
+        detector_hr: Vec<f64>,
+        older_hr: Vec<f64>,
+        older_hr_missing: usize,
+        detector_hr_missing: usize,
+    }
+    fn push(est: Option<f64>, truth: f64, errors: &mut Vec<f64>, missing: &mut usize) {
+        match est {
+            Some(x) => errors.push((x - truth).abs()),
+            None => *missing += 1,
+        }
+    }
+    let mut levels: BTreeMap<String, Errors> = BTreeMap::new();
+    let mut cases = 0;
+    for set in 0..SEED_SETS {
+        for sc in scenarios_for(set)
+            .into_iter()
+            .filter(|s| s.family == Family::Vitals)
+        {
+            let g = generate(&sc);
+            let n = g.amplitudes[0].len();
+            let mut detector = VitalSignDetector::new(sc.fs);
+            // ruview-kernel's SessionConfig defaults.
+            let mut pre = CsiVitalPreprocessor::new(n, 0.05);
+            let mut breathing = BreathingExtractor::new(n, sc.fs, 30.0);
+            let mut heart = HeartRateExtractor::new(n, sc.fs, 15.0);
+            let weights = vec![1.0 / n as f64; n];
+            let tail_from = g.amplitudes.len().saturating_sub((15.0 * sc.fs) as usize);
+            let (mut d_br, mut d_hr, mut o_br, mut o_hr) = (vec![], vec![], vec![], vec![]);
+            let (mut last_br, mut last_hr) = (None, None);
+            for (i, (a, p)) in g.amplitudes.iter().zip(&g.phases).enumerate() {
+                let v = detector.process_frame(a, p);
+                let frame = CsiFrame {
+                    amplitudes: a.clone(),
+                    phases: p.clone(),
+                    n_subcarriers: n,
+                    sample_index: i as u64,
+                    sample_rate_hz: sc.fs,
+                };
+                if let Some(residuals) = pre.process(&frame) {
+                    if let Some(e) = breathing.extract(&residuals, &weights) {
+                        last_br = (e.status != VitalStatus::Unavailable).then_some(e.value_bpm);
+                    }
+                    if let Some(e) = heart.extract(&residuals, &frame.phases) {
+                        last_hr = (e.status != VitalStatus::Unavailable).then_some(e.value_bpm);
+                    }
+                }
+                if i >= tail_from {
+                    d_br.extend(v.breathing_rate_bpm);
+                    d_hr.extend(v.heart_rate_bpm);
+                    o_br.extend(last_br);
+                    o_hr.extend(last_hr);
+                }
+            }
+            cases += 1;
+            let e = levels.entry(format!("{:.0} dB", sc.dyn_db)).or_default();
+            push(
+                median(d_br),
+                sc.breath_bpm,
+                &mut e.detector_br,
+                &mut e.detector_br_missing,
+            );
+            push(
+                median(o_br),
+                sc.breath_bpm,
+                &mut e.older_br,
+                &mut e.older_br_missing,
+            );
+            push(
+                median(d_hr),
+                sc.heart_bpm,
+                &mut e.detector_hr,
+                &mut e.detector_hr_missing,
+            );
+            push(
+                median(o_hr),
+                sc.heart_bpm,
+                &mut e.older_hr,
+                &mut e.older_hr_missing,
+            );
+        }
+    }
+    let mae = |v: &[f64]| {
+        if v.is_empty() {
+            "—".to_string()
+        } else {
+            format!("{:.2}", v.iter().sum::<f64>() / v.len() as f64)
+        }
+    };
+    let mut r = String::new();
+    let _ = writeln!(
+        r,
+        "\n### Older vitals pipeline in `wifi-densepose-vitals` (informational, not ratcheted)\n"
+    );
+    let _ = writeln!(
+        r,
+        "The vital-sign detector against the crate's `BreathingExtractor` / `HeartRateExtractor` \
+         (as `ruview-kernel` runs them), on the {cases} vitals scenarios of seed sets 0–{}. \
+         Mean absolute error in BPM; misses (no estimate in the last 15 s) in brackets.\n",
+        SEED_SETS - 1
+    );
+    let _ = writeln!(
+        r,
+        "| Reflection | Breathing, detector | Breathing, older pipeline | Heart rate, detector | Heart rate, older pipeline |\n|---|---|---|---|---|"
+    );
+    for (level, e) in &levels {
+        let _ = writeln!(
+            r,
+            "| {level} | {} ({}) | {} ({}) | {} ({}) | {} ({}) |",
+            mae(&e.detector_br),
+            e.detector_br_missing,
+            mae(&e.older_br),
+            e.older_br_missing,
+            mae(&e.detector_hr),
+            e.detector_hr_missing,
+            mae(&e.older_hr),
+            e.older_hr_missing
+        );
+    }
+    r
+}
+
 fn report_markdown(m: &Metrics, t: &Timing) -> String {
     let s = &m.summary;
     let mut r = String::new();
@@ -1726,7 +1864,7 @@ fn scenario_harness() {
     metrics.calibration = calibration_runs();
     metrics.best_link = Some(best_link_runs(0));
     metrics.fans = fan_runs();
-    let report = report_markdown(&metrics, &timing);
+    let report = report_markdown(&metrics, &timing) + &older_pipeline_comparison();
     eprintln!("{report}");
     if let Ok(path) = std::env::var("RUVIEW_SCENARIO_REPORT") {
         std::fs::write(&path, &report).expect("write RUVIEW_SCENARIO_REPORT");

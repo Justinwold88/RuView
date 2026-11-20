@@ -210,7 +210,7 @@ def lossless_conversion(path, source_packets, editcap, workdir):
     verify_lossless(source_packets, derived)
     return derived, {"argv": ["editcap", "-F", "nsecpcap", "<source>", "<derivative>"],
                      "derivative_sha256": hashlib.sha256(derived_raw).hexdigest(),
-                     "packets_equal": len(derived), "timestamps_equal": True,
+                     "packet_count": len(derived), "timestamps_equal": True,
                      "lengths_equal": True, "bytes_equal": True}
 
 

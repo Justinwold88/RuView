@@ -415,72 +415,6 @@ pub fn generate_signal_field(
 
 // ── Feature extraction ──────────────────────────────────────────────────────
 
-pub fn estimate_breathing_rate_hz(frame_history: &VecDeque<Vec<f64>>, sample_rate_hz: f64) -> f64 {
-    let n = frame_history.len();
-    if n < 6 {
-        return 0.0;
-    }
-
-    let series: Vec<f64> = frame_history
-        .iter()
-        .map(|amps| {
-            if amps.is_empty() {
-                0.0
-            } else {
-                amps.iter().sum::<f64>() / amps.len() as f64
-            }
-        })
-        .collect();
-    let mean_s = series.iter().sum::<f64>() / n as f64;
-    let detrended: Vec<f64> = series.iter().map(|x| x - mean_s).collect();
-
-    let n_candidates = 9usize;
-    let f_low = 0.1f64;
-    let f_high = 0.5f64;
-    let mut best_freq = 0.0f64;
-    let mut best_power = 0.0f64;
-
-    for i in 0..n_candidates {
-        let freq = f_low + (f_high - f_low) * i as f64 / (n_candidates - 1).max(1) as f64;
-        let omega = 2.0 * std::f64::consts::PI * freq / sample_rate_hz;
-        let coeff = 2.0 * omega.cos();
-        let (mut s_prev2, mut s_prev1) = (0.0f64, 0.0f64);
-        for &x in &detrended {
-            let s = x + coeff * s_prev1 - s_prev2;
-            s_prev2 = s_prev1;
-            s_prev1 = s;
-        }
-        let power = s_prev2 * s_prev2 + s_prev1 * s_prev1 - coeff * s_prev1 * s_prev2;
-        if power > best_power {
-            best_power = power;
-            best_freq = freq;
-        }
-    }
-
-    let avg_power = {
-        let mut total = 0.0f64;
-        for i in 0..n_candidates {
-            let freq = f_low + (f_high - f_low) * i as f64 / (n_candidates - 1).max(1) as f64;
-            let omega = 2.0 * std::f64::consts::PI * freq / sample_rate_hz;
-            let coeff = 2.0 * omega.cos();
-            let (mut s_prev2, mut s_prev1) = (0.0f64, 0.0f64);
-            for &x in &detrended {
-                let s = x + coeff * s_prev1 - s_prev2;
-                s_prev2 = s_prev1;
-                s_prev1 = s;
-            }
-            total += s_prev2 * s_prev2 + s_prev1 * s_prev1 - coeff * s_prev1 * s_prev2;
-        }
-        total / n_candidates as f64
-    };
-
-    if best_power > avg_power * 3.0 {
-        best_freq.clamp(f_low, f_high)
-    } else {
-        0.0
-    }
-}
-
 pub fn compute_subcarrier_importance_weights(sensitivity: &[f64]) -> Vec<f64> {
     let n = sensitivity.len();
     if n == 0 {
@@ -533,11 +467,13 @@ pub fn compute_subcarrier_variances(frame_history: &VecDeque<Vec<f64>>, n_sub: u
         .collect()
 }
 
+/// Returns (features, raw_classification, sub_variances, raw_motion_score).
+/// Breathing rate comes only from the vital-sign detector (plan item 4.1).
 pub fn extract_features_from_frame(
     frame: &Esp32Frame,
     frame_history: &VecDeque<Vec<f64>>,
     sample_rate_hz: f64,
-) -> (FeatureInfo, ClassificationInfo, f64, Vec<f64>, f64) {
+) -> (FeatureInfo, ClassificationInfo, Vec<f64>, f64) {
     let n_sub = frame.amplitudes.len().max(1);
     let n = n_sub as f64;
     let mean_rssi = frame.rssi as f64;
@@ -646,8 +582,6 @@ pub fn extract_features_from_frame(
         (1.0 - (temporal_variance / (mean_amp * mean_amp + 1e-9)).clamp(0.0, 1.0)).max(0.0);
     let signal_quality = (snr_quality * 0.6 + stability * 0.4).clamp(0.0, 1.0);
 
-    let breathing_rate_hz = estimate_breathing_rate_hz(frame_history, sample_rate_hz);
-
     let features = FeatureInfo {
         mean_rssi,
         variance,
@@ -664,13 +598,7 @@ pub fn extract_features_from_frame(
         confidence: (0.4 + signal_quality * 0.3 + motion_score * 0.3).clamp(0.0, 1.0),
     };
 
-    (
-        features,
-        raw_classification,
-        breathing_rate_hz,
-        sub_variances,
-        motion_score,
-    )
+    (features, raw_classification, sub_variances, motion_score)
 }
 
 // ── Classification ──────────────────────────────────────────────────────────
@@ -1279,7 +1207,7 @@ mod static_room_motion_tests {
             phases: vec![0.0; amplitudes.len()],
         };
         let history: VecDeque<Vec<f64>> = std::iter::repeat(amplitudes).take(20).collect();
-        let (features, classification, _, _, motion_score) =
+        let (features, classification, _, motion_score) =
             extract_features_from_frame(&frame, &history, 20.0);
         assert!(features.motion_band_power > 25.0, "the fixture must have a strong room shape");
         assert!(features.change_points > 0);

@@ -56,6 +56,7 @@ use wifi_densepose_sensing_server::bootstrap_baseline::{
     BOOTSTRAP_VALIDATION_SAMPLE_TIMEOUT_MS,
 };
 // ADR-295 / ADR-297: canonical provenance state + per-node/room inference.
+use wifi_densepose_sensing_server::best_link::{self, BestLink};
 use wifi_densepose_sensing_server::inference::{fuse_room, NodeInference, RoomInference};
 use wifi_densepose_sensing_server::motion_calibration::{self, MotionCalibration};
 use wifi_densepose_sensing_server::privacy_filter;
@@ -228,6 +229,20 @@ struct Args {
     /// release.
     #[arg(long, env = "RUVIEW_LEGACY_POSE_SOURCE_NAME", value_parser = cli::parse_env_bool)]
     legacy_pose_source_name: bool,
+
+    /// Fuse every node into the room verdict (the pre-1.4 behaviour) instead
+    /// of following the single best link. See `GET /api/v1/links`.
+    #[arg(long, env = "RUVIEW_FUSE_ALL_LINKS", value_parser = cli::parse_env_bool)]
+    fuse_all_links: bool,
+
+    /// Hours between best-link re-rankings (1 to 8760; default one week).
+    #[arg(
+        long,
+        env = "RUVIEW_BEST_LINK_RERANK_HOURS",
+        default_value_t = 168,
+        value_parser = clap::value_parser!(u32).range(1..=8760)
+    )]
+    best_link_rerank_hours: u32,
 
     /// MQTT publisher (HA auto-discovery) flags (ADR-115).
     /// Flattened so `--mqtt*` reach the binary's parser and the publisher
@@ -2278,6 +2293,8 @@ struct AppStateInner {
     motion_calibration_last: Option<MotionCalibrationResults>,
     /// Keeps background saves of `motion_calibrations` in order.
     motion_calibration_saves: Arc<motion_calibration::SaveQueue>,
+    /// Plan item 1.4: which node the room verdict follows.
+    best_link: BestLink,
     /// ADR-262 P3: the live RuField surface. Holds the dedicated ed25519 signer
     /// + a bounded ring of recent signed `FieldEvent`s + the `/ws/field`
     /// broadcast topic. The governed sensing cycle calls `emit()` on it once per
@@ -3303,6 +3320,7 @@ impl AppStateInner {
             motion_calibration_run: None,
             motion_calibration_last: None,
             motion_calibration_saves: Arc::default(),
+            best_link: BestLink::new(false, best_link::DEFAULT_RERANK),
             field_surface: Arc::new(RwLock::new(rufield_surface::FieldSurface::from_env())),
             pose_physics: pose_physics::PosePhysicsRuntime::new(
                 wifi_densepose_physics::PhysicsConfig::default(),
@@ -5082,6 +5100,122 @@ mod still_hold_tests {
             assert!(!h.update(3.0, false, None, i / 20, FPS));
         }
         assert!(!h.update(0.5, true, None, 11, FPS));
+    }
+}
+
+/// Plan item 1.4: the node the room verdict follows, or `None` to fuse all
+/// fresh nodes. Calibration link scores break ties.
+fn best_link_for_room(
+    s: &mut AppStateInner,
+    active_nodes: &[NodeInfo],
+    now: std::time::Instant,
+) -> Option<u8> {
+    let fresh: Vec<u8> = active_nodes
+        .iter()
+        .filter(|n| n.node_inference.is_some())
+        .map(|n| n.node_id)
+        .collect();
+    let scores: BTreeMap<u8, u8> = s
+        .motion_calibrations
+        .iter()
+        .map(|(id, c)| (*id, c.link_quality.score))
+        .collect();
+    s.best_link.select(now, &fresh, &scores)
+}
+
+/// `GET /api/v1/links` (plan item 1.4): whether the room follows one link or
+/// fuses all, which link, when it is re-ranked next, and the evidence.
+async fn links_status(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    let now = std::time::Instant::now();
+    let b = &s.best_link;
+    let pending: serde_json::Map<String, serde_json::Value> = b
+        .pending()
+        .into_iter()
+        .map(|(id, (frames, contrast))| {
+            (
+                id.to_string(),
+                serde_json::json!({ "frames": frames, "contrast": contrast }),
+            )
+        })
+        .collect();
+    let ranking: serde_json::Map<String, serde_json::Value> = b
+        .last_ranking()
+        .iter()
+        .map(|(id, e)| (id.to_string(), serde_json::json!(e)))
+        .collect();
+    Json(serde_json::json!({
+        "mode": if b.fuse_all() { "fuse_all" } else { "best_link" },
+        "selected": b.selected(),
+        "next_rerank_secs": b.next_rerank_in(now).map(|d| d.as_secs()),
+        "last_ranking": ranking,
+        "pending": pending,
+        "note": "Links are ranked by contrast (99th / 10th percentile of smoothed motion) over the ranking period; calibration link scores break ties. Tuned on SYNTHETIC rooms; not yet validated on hardware.",
+    }))
+}
+
+#[cfg(test)]
+mod best_link_http_tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+
+    #[test]
+    fn best_link_is_the_default_and_fusion_is_a_flag() {
+        let a = Args::parse_from(["sensing-server"]);
+        assert!(!a.fuse_all_links);
+        assert_eq!(a.best_link_rerank_hours, 168);
+        let a = Args::parse_from([
+            "sensing-server",
+            "--fuse-all-links",
+            "--best-link-rerank-hours",
+            "24",
+        ]);
+        assert!(a.fuse_all_links);
+        assert_eq!(a.best_link_rerank_hours, 24);
+        assert!(Args::try_parse_from(["sensing-server", "--best-link-rerank-hours", "0"]).is_err());
+    }
+
+    #[tokio::test]
+    async fn links_status_reports_mode_choice_and_evidence() {
+        let mut inner = AppStateInner::minimal();
+        for i in 0..2000 {
+            // Someone walked past node 4 a fifth of the time.
+            inner
+                .best_link
+                .observe(4, if i % 5 == 0 { 0.2 } else { 0.02 });
+        }
+        let state = Arc::new(RwLock::new(inner));
+        let app = Router::new()
+            .route("/api/v1/links", get(links_status))
+            .with_state(state.clone());
+        let get_json = |app: Router| async move {
+            let resp = app
+                .oneshot(Request::get("/api/v1/links").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+        };
+        let body = get_json(app.clone()).await;
+        assert_eq!(body["mode"], "best_link");
+        assert!(body["selected"].is_null());
+        assert_eq!(body["pending"]["4"]["frames"], 2000);
+        let chosen =
+            state
+                .write()
+                .await
+                .best_link
+                .select(std::time::Instant::now(), &[4], &BTreeMap::new());
+        assert_eq!(chosen, Some(4));
+        let body = get_json(app).await;
+        assert_eq!(body["selected"], 4);
+        assert_eq!(body["last_ranking"]["4"]["frames"], 2000);
+        // The first re-rank comes after an hour, not a week.
+        let next = body["next_rerank_secs"].as_u64().unwrap();
+        assert!((3590..=3600).contains(&next), "{next}");
     }
 }
 
@@ -13706,8 +13840,12 @@ async fn udp_receiver_task(
                     // ADR-297 — explicit, deterministic room aggregate over the
                     // per-node inferences (freshness-weighted vote). Not the
                     // latest-writer classification (issue #1555).
+                    let followed = best_link_for_room(&mut s, &active_nodes, now);
                     let room_inference = fuse_room(
-                        active_nodes.iter().filter_map(|ni| ni.node_inference.as_ref()),
+                        active_nodes
+                            .iter()
+                            .filter(|ni| followed.map_or(true, |id| ni.node_id == id))
+                            .filter_map(|ni| ni.node_inference.as_ref()),
                         NODE_STALE_AFTER_MS,
                     );
 
@@ -14087,6 +14225,7 @@ async fn udp_receiver_task(
                     ) = extract_features_from_frame(&frame, &ns.frame_history, sample_rate_hz);
                     smooth_and_classify_node(ns, &mut classification, raw_motion);
                     let calibration_sample = motion_calibration_sample(ns, &frame);
+                    let smoothed_motion = ns.smoothed_motion;
 
                     // Adaptive override using cloned model (safe, no raw pointers).
                     if let Some(ref model) = adaptive_model_clone {
@@ -14160,6 +14299,7 @@ async fn udp_receiver_task(
                     if let Some(sample) = calibration_sample {
                         observe_motion_calibration(&mut s, node_id, sample);
                     }
+                    s.best_link.observe(node_id, smoothed_motion);
 
                     s.rssi_history.push_back(features.mean_rssi);
                     if s.rssi_history.len() > 60 {
@@ -14262,8 +14402,12 @@ async fn udp_receiver_task(
 
                     // ADR-297 — explicit deterministic room aggregate over the
                     // per-node inferences (not last-writer; issue #1555).
+                    let followed = best_link_for_room(&mut s, &active_nodes, now);
                     let room_inference = fuse_room(
-                        active_nodes.iter().filter_map(|ni| ni.node_inference.as_ref()),
+                        active_nodes
+                            .iter()
+                            .filter(|ni| followed.map_or(true, |id| ni.node_id == id))
+                            .filter_map(|ni| ni.node_inference.as_ref()),
                         NODE_STALE_AFTER_MS,
                     );
                     let room_classification = if bootstrap_empty {
@@ -16016,6 +16160,10 @@ async fn main() {
         motion_calibration_run: None,
         motion_calibration_last: None,
         motion_calibration_saves: Arc::default(),
+        best_link: BestLink::new(
+            args.fuse_all_links,
+            std::time::Duration::from_secs(u64::from(args.best_link_rerank_hours) * 3600),
+        ),
         field_surface: field_surface.clone(),
         pose_physics: pose_physics::PosePhysicsRuntime::new(
             wifi_densepose_physics::PhysicsConfig::default(),
@@ -16409,6 +16557,8 @@ async fn main() {
             "/api/v1/calibration/motion/reset",
             post(motion_calibration_reset),
         )
+        // Plan item 1.4: best-link mode status.
+        .route("/api/v1/links", get(links_status))
         // ADR-044 §5.3: runtime-configurable dedup factor
         .route(
             "/api/v1/config/dedup-factor",

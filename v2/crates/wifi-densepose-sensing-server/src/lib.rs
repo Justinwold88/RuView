@@ -9,6 +9,8 @@
 //! - Real-time CSI introspection / low-latency tap (`introspection`, ADR-099)
 
 pub mod bearer_auth;
+/// Plan item 1.4: room presence follows the best link, re-ranked weekly.
+pub mod best_link;
 pub mod bootstrap_baseline;
 pub mod browser_session;
 pub mod ws_ticket;

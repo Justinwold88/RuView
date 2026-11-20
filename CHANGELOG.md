@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Best-link mode: the room follows the node that sees people (plan item
+  1.4).** With several ESP32 nodes, the room verdict now follows one node
+  instead of a vote across all of them: the node with the highest contrast
+  (99th over 10th percentile of its smoothed motion) over the ranking
+  period, with calibration link scores breaking ties. Rankings happen after
+  the first minute of data, then 1 h, 4 h, 16 h and 64 h later, then every
+  `--best-link-rerank-hours` (default 168). A ranking with no clear
+  activity keeps fusing. `GET /api/v1/links` shows the choice and evidence;
+  `--fuse-all-links` (`RUVIEW_FUSE_ALL_LINKS`) restores the old vote.
+  SYNTHETIC (three links on one room, one blind, one noisy): best link held
+  a still person in 5 of 5 rooms with 0 of 5 empty rooms occupied, against
+  4 of 5 and 1 of 5 when fusing all. Not yet MEASURED on hardware.
+
 - **A still person stays present while their breathing is periodic (plan
   item 1.3).** Each ESP32 node now tracks breathing evidence: the peak of
   the 0.1-0.5 Hz band against the median of 0.5-2 Hz, over the last 20 s.

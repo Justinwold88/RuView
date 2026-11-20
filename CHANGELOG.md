@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wasmtime-wasi and wasmtime-wasi-http, and a panic in
   `Caller::get_module_export`), all fixed in 36.0.21. It is a semver-patch
   update of the optional `homecore-plugins` sandbox. The Cargo.toml minimum
-  is raised to 36.0.23, so the lockfile cannot fall back. The `cargo audit`
+  is raised to 36.0.23, so the lockfile cannot fall back. The vendored
+  `wasmtime-internal-cache` patch, which selects the fixed zstd 0.14.3, moves
+  to 36.0.23 with it. Its source is byte-for-byte upstream and unchanged from
+  36.0.20, and the archive SHA-256 is checked against crates.io. Otherwise
+  the patch would stop applying and zstd 0.13 would come back. The `cargo audit`
   warnings (unmaintained or unsound crates) do not fail the job and are
   unchanged.
 

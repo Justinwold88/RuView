@@ -93,6 +93,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged; all walk-ins still caught within 2 s. Gate G1 passes on all
   SYNTHETIC rows. Not yet MEASURED on hardware.
 
+- **Security: Wasmtime 36.0.20 → 36.0.23.** It fixes RUSTSEC-2026-0566 and
+  RUSTSEC-2026-0571 (unbounded host memory growth from empty writes in
+  wasmtime-wasi and wasmtime-wasi-http) and RUSTSEC-2026-0569 (a panic in
+  `Caller::get_module_export`), which failed the Rust Dependency Audit on
+  every PR.
+  - The checksum-verified `wasmtime-internal-cache` patch moves with it, to
+    `vendor/security/wasmtime-internal-cache-36.0.23`. Its source is
+    byte-identical upstream, with the same `zstd` 0.14.3 requirement.
+  - Only the Wasmtime, Cranelift and Pulley family changes in `Cargo.lock`.
+  - `cargo audit` now passes, with the 35 previously reviewed warnings.
+
 - **Breathing uses per-subcarrier streams, cleaned phase and PCA (plan
   item 1.2).** The detector no longer averages all subcarriers into one
   amplitude series. Each subcarrier's log-amplitude (per-frame gain

@@ -38,6 +38,11 @@ import download_public_bfi as download  # noqa: E402
 import public_bfi_decode  # noqa: E402
 
 PROTOCOL = "public-bfi-motion-1"
+# ADR-365 Amendment 1: the only named dataset policy for nonzero Sequence
+# Control low bits. It applies to this public adapter only, never to live capture.
+SEQCTL_POLICY = "csi-bfi-har-c3013b3-seqctl-v1"
+PROTOCOLS = {None: "public-bfi-motion-1", SEQCTL_POLICY: "public-bfi-motion-2"}
+COMPLETE_FRAME = 24 + public_bfi_decode.BODY_BYTES
 WIRESHARK_VERSION = "4.2.2"
 MAX_FILE = download.MAX_FILE
 MAX_BLOCK = 1024 * 1024
@@ -228,11 +233,21 @@ def angle_change(previous, current):
     return float(np.abs(delta).mean())
 
 
-def admit_packets(packets, oracle_reports=ORACLE_REPORTS):
-    """Apply the nine frozen packet steps. Returns (counts, times, changes, oracle samples).
+def fcs_was_present(data, frame):
+    """True when strip_radiotap removed (and so verified) a four-byte FCS."""
+    return len(data) - int.from_bytes(data[2:4], "little") - len(frame) == 4
+
+
+def admit_packets(packets, oracle_reports=ORACLE_REPORTS, policy=None):
+    """Apply the frozen packet steps. Returns (counts, times, changes, oracle samples).
 
     changes[j] is the angle change from admitted report j-1 to j (changes[0] is None).
+    With policy=SEQCTL_POLICY (ADR-365 Amendment 1), a frame whose Sequence
+    Control low bits are nonzero is admitted only as a complete, FCS-verified,
+    unfragmented MPDU of exactly one 1,003-byte body. Its bytes are never
+    rewritten, and the low bits are only counted.
     """
+    require(policy in PROTOCOLS, "unknown_seqctl_policy")
     counts = collections.Counter()
     candidates = []
     for index, (timestamp, captured, original, data) in enumerate(packets):
@@ -257,9 +272,18 @@ def admit_packets(packets, oracle_reports=ORACLE_REPORTS):
         if fc & FC_GUARDS:
             counts["rejected_mac_guard_flags"] += 1
             continue
-        if frame[22] & 0x0F:
-            counts["quarantined_nonzero_fragment"] += 1
-            continue
+        low_bits = frame[22] & 0x0F
+        counts[f"seqctl_low_bits_{low_bits:02d}"] += 1
+        if low_bits:
+            if policy != SEQCTL_POLICY:
+                counts["quarantined_nonzero_fragment"] += 1
+                continue
+            if not fcs_was_present(data, frame):
+                counts["quarantined_nonzero_fragment_without_fcs"] += 1
+                continue
+            if len(frame) != COMPLETE_FRAME:
+                counts["quarantined_nonzero_fragment_incomplete_length"] += 1
+                continue
         candidates.append((index, timestamp, fc, frame, frame[10:16] + frame[4:10]))
     pairs, first_seen = collections.Counter(), {}
     for position, candidate in enumerate(candidates):
@@ -300,8 +324,11 @@ def admit_packets(packets, oracle_reports=ORACLE_REPORTS):
         changes.append(None if previous_angles is None else angle_change(previous_angles, angles))
         previous_angles = angles
         times.append(timestamp)
-        if len(samples) < oracle_reports:
-            samples.append((packets[index][3], report))
+        kind = "policy" if frame[22] & 0x0F else "zero"
+        if sum(1 for _, _, k in samples if k == kind) < oracle_reports:
+            samples.append((packets[index][3], report, kind))
+        if kind == "policy":
+            counts["admitted_by_seqctl_policy"] += 1
     counts["admitted_reports"] = len(times)
     return counts, times, changes, samples
 
@@ -344,7 +371,7 @@ def interval_features(intervals, changes):
 
 def oracle_pcap(samples):
     out = [struct.pack("<IHHIIII", 0xa1b2c3d4, 2, 4, 0, 0, 65535, 127)]
-    for number, (packet, _) in enumerate(samples, 1):
+    for number, (packet, *_) in enumerate(samples, 1):
         require(len(packet) <= 65535, "oracle_packet_too_large")
         out.append(struct.pack("<IIII", number, 0, len(packet), len(packet)) + packet)
     return b"".join(out)
@@ -361,7 +388,7 @@ def oracle_values(pdml, samples):
         raise DecodeError("invalid_oracle_xml") from error
     packets = root.findall("packet")
     require(len(packets) == len(samples), "oracle_packet_count_mismatch")
-    for element, (_, report) in zip(packets, samples):
+    for element, (_, report, *_) in zip(packets, samples):
         require(not any(x.get("name") == "_ws.malformed" for x in element.iter()), "oracle_malformed_packet")
         fields = collections.defaultdict(list)
         for field in element.iter("field"):
@@ -388,6 +415,14 @@ def oracle_values(pdml, samples):
 
 
 def oracle_compare(tshark, samples):
+    """tshark 4.2.2 PDML comparison with default preferences (802.11 reassembly on).
+
+    Each sample is written to its own pcap record, so tshark sees every frame
+    alone; a policy-admitted frame decodes only because it carries the whole
+    body. With reassembly off, tshark 4.2.2 does not dissect any frame whose
+    fragment number is nonzero (it labels the payload a fragment), so that
+    setting cannot serve as an oracle for them.
+    """
     if not samples:
         return 0
     pdml = compare_tshark.run_bounded([tshark, "-n", "-r", "-", "-T", "pdml"], oracle_pcap(samples), timeout=120)
@@ -403,7 +438,7 @@ def tool_version(executable, product):
 
 # ---------------------------------------------------------------- census
 
-def census_file(entry, path, tools, workdir):
+def census_file(entry, path, tools, workdir, policy=None):
     """One file's census record and its private eligible-interval features."""
     record = {"path": entry["path"], "group": entry["split"], "activity": entry["activity_code"],
               "participant": entry["participant_code"], "status": "ADMITTED"}
@@ -417,7 +452,7 @@ def census_file(entry, path, tools, workdir):
         record["inventory"] = inventory
         packets, record["conversion"] = lossless_conversion(path, source, tools["editcap"], workdir)
         del source
-        counts, times, changes, samples = admit_packets(packets)
+        counts, times, changes, samples = admit_packets(packets, policy=policy)
         del packets
         record["packets"] = dict(sorted(counts.items()))
         intervals = observed_intervals(times)
@@ -430,7 +465,8 @@ def census_file(entry, path, tools, workdir):
         record["eligible_intervals"] = len(features)
         record["eligible_seconds"] = len(features) * INTERVAL_NS / NS
         try:
-            record["oracle"] = {"compared": oracle_compare(tools["tshark"], samples), "status": "MATCH"}
+            record["oracle"] = {"compared": oracle_compare(tools["tshark"], samples), "status": "MATCH",
+                                "policy_admitted_compared": sum(1 for *_, kind in samples if kind == "policy")}
         except DecodeError as error:
             record["oracle"] = {"compared": 0, "status": "FAILED", "reason": error.reason}
         if features:
@@ -484,6 +520,7 @@ def admission(groups, records):
         reasons.append("decoder_oracle_failed" if failures else "decoder_oracle_compared_nothing")
     return {"admitted": not reasons, "reasons": reasons, "shortfalls": shortfalls,
             "oracle": {"reports_compared": compared, "files_compared": sum(o["compared"] > 0 for o in oracle),
+                       "policy_admitted_compared": sum(o.get("policy_admitted_compared", 0) for o in oracle),
                        "failures": dict(failures), "frequency_axis_validated": False}}
 
 
@@ -570,6 +607,7 @@ def markdown(report):
              "Not a presence test, not ESP32 CSI, not a real-home claim.", "",
              f"- Dataset revision: `{report['dataset_revision']}`",
              f"- Manifest SHA-256: `{report['manifest_sha256']}`",
+             f"- Sequence Control policy: `{report.get('seqctl_policy', 'none (quarantine)')}`",
              f"- Repository commit: `{report['repository_commit']}`",
              f"- Workflow run: {report['workflow_run']}",
              f"- Wireshark: {report['tools']['wireshark']}", "",
@@ -598,7 +636,10 @@ def markdown(report):
     oracle = gate["oracle"]
     lines += ["", "## Decoder oracle", "",
               f"{oracle['reports_compared']} admitted reports from {oracle['files_compared']} files compared "
-              f"with {report['tools']['wireshark'].rstrip('.')}. Failures: {oracle['failures'] or 'none'}. "
+              f"with {report['tools']['wireshark'].rstrip('.')}"
+              + (f", {oracle['policy_admitted_compared']} of them admitted by the Sequence Control policy"
+                 if oracle.get("policy_admitted_compared") else "")
+              + f". Failures: {oracle['failures'] or 'none'}. "
               "Frequency axis not validated.", "",
               "## Benchmark admission", "",
               f"**{'ADMITTED' if gate['admitted'] else 'NOT ADMITTED'}**"
@@ -646,7 +687,7 @@ LIMITATIONS = [
 ]
 
 
-def run(root, tools, commit, run_url, log=print):
+def run(root, tools, commit, run_url, log=print, policy=None):
     manifest, _ = download.load_manifest(root / "source-manifest.json")
     receipt = json.loads(download.read_bounded(root / "download-receipt.json", download.MAX_RECEIPT))
     require(receipt.get("status") == "COMPLETED" and receipt.get("manifest_sha256") == download.MANIFEST_SHA256,
@@ -660,7 +701,8 @@ def run(root, tools, commit, run_url, log=print):
     with tempfile.TemporaryDirectory(prefix="bfi-motion-") as workdir:
         os.chmod(workdir, 0o700)
         for number, entry in enumerate(entries, 1):
-            record, file_features = census_file(entry, download.destination(root, entry["path"]), tools, workdir)
+            record, file_features = census_file(entry, download.destination(root, entry["path"]), tools, workdir,
+                                                policy)
             records.append(record)
             features.append(file_features)
             detail = record.get("reason") or f"eligible_intervals={record.get('eligible_intervals', 0)}"
@@ -668,7 +710,7 @@ def run(root, tools, commit, run_url, log=print):
     groups = summarize(records, downloaded_groups)
     gate = admission(groups, records)
     scores = score(features, records) if gate["admitted"] else None
-    return {"protocol": PROTOCOL, "evidence": "MEASURED",
+    return {"protocol": PROTOCOLS[policy], "seqctl_policy": policy or "none (quarantine)", "evidence": "MEASURED",
             "data": "public CSI-BFI-HAR BFI captures (GPL-3.0 dataset; data not redistributed)",
             "dataset_revision": download.REVISION, "manifest_sha256": download.MANIFEST_SHA256,
             "repository_commit": commit, "workflow_run": run_url,
@@ -689,13 +731,17 @@ def main(argv=None):
     parser.add_argument("--editcap", default="editcap")
     parser.add_argument("--commit", default=os.environ.get("GITHUB_SHA", "unknown"))
     parser.add_argument("--run-url", default="local run")
+    parser.add_argument("--seqctl-policy", choices=("none", SEQCTL_POLICY), default="none",
+                        help="none = protocol 1 (quarantine nonzero Sequence Control low bits); "
+                             f"{SEQCTL_POLICY} = protocol 2 (ADR-365 Amendment 1)")
     args = parser.parse_args(argv)
+    policy = None if args.seqctl_policy == "none" else args.seqctl_policy
     try:
         tools = {name: shutil.which(getattr(args, name)) for name in ("tshark", "editcap")}
         require(all(tools.values()), "wireshark_tools_not_found")
         tools["version"] = tool_version(tools["tshark"], "TShark")
         tools["editcap_version"] = tool_version(tools["editcap"], "Editcap")
-        report = run(download.private_root(args.data), tools, args.commit, args.run_url)
+        report = run(download.private_root(args.data), tools, args.commit, args.run_url, policy=policy)
     except (DecodeError, download.DownloadError, OSError, ValueError) as error:
         reason = getattr(error, "reason", None) or getattr(error, "code", None) or str(error)
         print(json.dumps({"status": "ERROR", "reason": reason}))

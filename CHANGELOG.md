@@ -79,6 +79,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a still person in 5 of 5 rooms with 0 of 5 empty rooms occupied, against
   4 of 5 and 1 of 5 when fusing all. Not yet MEASURED on hardware.
 
+- **ADR-365 Amendment 1 and public BFI protocol version 2 (proposed).** A
+  named dataset policy, `csi-bfi-har-c3013b3-seqctl-v1`, admits public
+  CSI-BFI-HAR feedback frames whose Sequence Control low bits are nonzero.
+  Each must be FCS-verified, have More Fragments clear and be exactly one
+  complete 1,003-byte body, and the bytes are never rewritten. It applies only
+  to the public adapter; live capture still rejects nonzero fragment numbers.
+  `public-bfi-motion.yml` gains a `seqctl_policy` input. Protocol
+  `public-bfi-motion-2` differs from version 1 only in that admission step.
+  The tshark oracle now also samples policy-admitted reports, and the census
+  counts the low-bit values per group.
+
 - **A still person stays present while their breathing is periodic (plan
   item 1.3).** Each ESP32 node now tracks breathing evidence: the peak of
   the 0.1-0.5 Hz band against the median of 0.5-2 Hz, over the last 20 s.

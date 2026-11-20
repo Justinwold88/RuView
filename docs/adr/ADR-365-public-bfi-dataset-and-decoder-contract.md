@@ -119,3 +119,76 @@ in the [decode audit](../../tools/bfi_learning/PUBLIC-BFI-DECODE.md) and
 - Preserves [ADR-120](ADR-120-bfld-privacy-class-and-hash-rotation.md).
 - [ADR-119](ADR-119-bfld-frame-format-and-wire-protocol.md) defines a BFLD envelope;
   that envelope does not replace raw 802.11 decoding.
+
+## Amendment 1 — Dataset policy for nonzero Sequence Control low bits
+
+- **Date**: 2026-11-20
+- **Status**: proposed. Requested by the fork owner after the first strict
+  census. It is not a maintainer acceptance, and upstream review is pending.
+- **Scope**: the public CSI-BFI-HAR adapter (`tools/bfi_learning/public_bfi_motion.py`)
+  at revision `c3013b3e…` only. Live capture, `prepare_bfi.py`, the sensing
+  server and every other adapter keep rejecting nonzero fragment numbers.
+
+### Why
+
+The first strict census (protocol `public-bfi-motion-1`, fork run
+44667646386) quarantined every frame with nonzero Sequence Control low bits.
+**MEASURED**:
+- 93.75% of BFI action frames in every partition/view group were quarantined.
+- All 240 files passed hashes, inventory, lossless conversion, radiotap/FCS
+  and the MAC guards. No frame had More Fragments set.
+- The admitted share was 1/16 in every group to within 0.01 percentage points.
+
+Four uniformly distributed bits would give exactly that share. In these
+captures the bits behave like a counter, not like fragment numbers of a
+fragmented MPDU. The remaining reports left train and validation with eligible
+intervals in only 6 and 11 of 60 recordings, so the benchmark was not admitted.
+
+This is evidence about this dataset only. It does not show the bits are
+normatively reserved for Action No Ack frames; that question stays open, as
+the decode audit records.
+
+### Policy `csi-bfi-har-c3013b3-seqctl-v1`
+
+A feedback frame whose Sequence Control low four bits are nonzero is admitted
+only if **all** of these hold, in addition to every rule that applies to
+fragment-zero frames:
+
+1. **Integrity:** radiotap declares an FCS, and the FCS matches a CRC-32 over
+   the whole MAC frame (`strip_radiotap` removed and verified it).
+2. **No fragmentation:** More Fragments is clear. This is already a live MAC
+   guard.
+3. **Complete:** the MAC frame is exactly 24 + 1,003 bytes, one complete VHT MU
+   3x1 body. `decode_body` also requires a single, complete feedback segment
+   (remaining segments 0, first segment 1).
+4. **Nothing rewritten:** the bytes are never changed. The low-bit value is
+   counted per group (`seqctl_low_bits_NN`) and is never used as a sequence or
+   loss counter.
+5. **Oracle:** in every admitted file, up to four policy-admitted reports are
+   compared with tshark 4.2.2 under default preferences, alongside up to four
+   fragment-zero reports:
+   - All control fields, the SNR code and all 936 angle integers must match.
+   - Each report is a separate capture record, so tshark decodes it from that
+     frame alone.
+   - With 802.11 reassembly turned off, tshark 4.2.2 does not dissect the body
+     of any nonzero-fragment frame, complete or not, so that setting cannot be
+     the oracle.
+
+A frame that fails rule 1 or rule 3 stays quarantined, with its own reason.
+
+**Partial bodies.** Every fragment of a fragmented MPDU except the last has
+More Fragments set, so it is rejected. A last fragment would pass only if it
+happened to begin with a valid VHT category and action, carried valid control
+bits and was exactly 1,003 bytes long. The census counts each rejection
+reason and the oracle compares samples in every file, so a systematic case
+would show there.
+
+### Consequences
+
+- **A new protocol version.** The census and scoring rules are unchanged. The
+  frozen protocol `public-bfi-motion-2` differs from version 1 only in this
+  admission step, and was written after version 1's census had been seen.
+  Nothing else was tuned on those results.
+- **Held-out groups** are still inspected for quality only.
+- **Live paths are unchanged.** A future live adapter that wants the same
+  behaviour needs its own amendment.

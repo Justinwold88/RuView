@@ -75,12 +75,16 @@ def pcapng(packets, endian="<", tsresol=9, snaplen=0, extra_idb=False, tsoffset=
     return b"".join(out)
 
 
-def recording(seconds=20, rate=10, moving=True, start_ns=1_700_000_000 * NS):
-    """Evenly spaced feedback; 'moving' changes the angles between reports."""
+def recording(seconds=20, rate=10, moving=True, start_ns=1_700_000_000 * NS, frag=lambda j: 0):
+    """Evenly spaced feedback; 'moving' changes the angles between reports.
+
+    `frag(j)` sets the low four Sequence Control bits of report j, like the
+    counter-like values in the public captures.
+    """
     out = []
     for j in range(seconds * rate):
         rows = rows_for(j if moving else 0)
-        out.append((start_ns + j * NS // rate, packet(body(rows), seq=j % 4096)))
+        out.append((start_ns + j * NS // rate, packet(body(rows), seq=j % 4096, frag=frag(j))))
     return out
 
 
@@ -175,6 +179,32 @@ class AdmissionTests(unittest.TestCase):
         self.assertIsNone(changes[0])
         self.assertEqual(changes[2], 0.0)
         self.assertEqual(len(samples), 4)
+
+    def test_seqctl_policy_admits_only_complete_fcs_checked_frames(self):
+        base = 10 * NS
+        packets = [
+            (base + 0, packet(body(rows_for(0)), seq=1, frag=0)),
+            (base + 1, packet(body(rows_for(1)), seq=1, frag=7)),               # complete, FCS: admitted
+            (base + 2, packet(body(rows_for(2)), seq=1, frag=3, fcs=False)),    # no FCS to prove integrity
+            (base + 3, packet(body(rows_for(3)) + b"\x00", seq=1, frag=9)),     # not exactly one body
+            (base + 4, packet(body(rows_for(4)), seq=1, frag=15, corrupt_fcs=True)),
+            (base + 5, packet(body(rows_for(5)), seq=1, frag=2, fc=0x04e0)),    # More Fragments set
+        ]
+        raw = [(t, len(p), len(p), p) for t, p in packets]
+        strict, times, _, _ = motion.admit_packets(raw)
+        self.assertEqual(times, [base])
+        self.assertEqual(strict["quarantined_nonzero_fragment"], 3)
+        counts, times, _, samples = motion.admit_packets(raw, policy=motion.SEQCTL_POLICY)
+        self.assertEqual(times, [base, base + 1])
+        self.assertEqual(counts["admitted_by_seqctl_policy"], 1)
+        self.assertEqual(counts["quarantined_nonzero_fragment_without_fcs"], 1)
+        self.assertEqual(counts["quarantined_nonzero_fragment_incomplete_length"], 1)
+        self.assertEqual(counts["rejected_fcs_mismatch"], 1)
+        self.assertEqual(counts["rejected_mac_guard_flags"], 1)
+        self.assertEqual((counts["seqctl_low_bits_00"], counts["seqctl_low_bits_07"]), (1, 1))
+        self.assertEqual([kind for *_, kind in samples], ["zero", "policy"])
+        with self.assertRaises(motion.DecodeError):
+            motion.admit_packets(raw, policy="anything-else")
 
     def test_most_common_pair_wins_and_ties_go_to_first_seen(self):
         packets = [(i, packet(body(rows_for(i)), seq=i, ta=STA if i in (1, 3) else OTHER)) for i in range(4)]
@@ -303,15 +333,44 @@ class WiresharkTests(unittest.TestCase):
         _, _, _, samples = motion.admit_packets(raw)
         tshark = shutil.which("tshark")
         self.assertEqual(motion.oracle_compare(tshark, samples), 4)
-        packet_bytes, report = samples[0]
+        packet_bytes, report, _ = samples[0]
         wrong = dict(report, quantized=((1, 0, 0, 0),) + report["quantized"][1:])
         with self.assertRaises(motion.DecodeError) as caught:
-            motion.oracle_compare(tshark, [(packet_bytes, wrong)])
+            motion.oracle_compare(tshark, [(packet_bytes, wrong, "zero")])
         self.assertEqual(caught.exception.reason, "oracle_angle_mismatch")
         wrong = dict(report, avg_snr_code=report["avg_snr_code"] + 1)
         with self.assertRaises(motion.DecodeError) as caught:
-            motion.oracle_compare(tshark, [(packet_bytes, wrong)])
+            motion.oracle_compare(tshark, [(packet_bytes, wrong, "zero")])
         self.assertEqual(caught.exception.reason, "oracle_snr_mismatch")
+
+    def test_policy_frames_decode_standalone_in_tshark(self):
+        raw = [(t, len(p), len(p), p) for t, p in recording(seconds=1, frag=lambda j: (j * 5) % 16)]
+        counts, _, _, samples = motion.admit_packets(raw, policy=motion.SEQCTL_POLICY)
+        self.assertEqual(counts["admitted_reports"], 10)
+        self.assertEqual([kind for *_, kind in samples], ["zero", "policy", "policy", "policy", "policy"])
+        tshark = shutil.which("tshark")
+        self.assertEqual(motion.oracle_compare(tshark, samples), 5)
+        # Why reassembly-off is not the oracle: tshark then dissects no body at
+        # all for a nonzero fragment number, complete or not.
+        pdml = motion.compare_tshark.run_bounded(
+            [tshark, "-n", "-o", "wlan.defragment:FALSE", "-r", "-", "-T", "pdml"], motion.oracle_pcap(samples[1:2]))
+        self.assertNotIn(b"compressed_beamforming_report.scidx", pdml)
+
+    def test_census_with_policy_end_to_end(self):
+        raw = pcapng(recording(seconds=12, frag=lambda j: j % 16))
+        import hashlib
+        entry = {"path": "HAR-1/BFI/M1/A_1_M1_P1.pcapng", "split": "train", "activity_code": "A",
+                 "participant_code": "P1", "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+        tools = {"tshark": shutil.which("tshark"), "editcap": shutil.which("editcap")}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "file.pcapng"
+            path.write_bytes(raw)
+            strict, _ = motion.census_file(entry, path, tools, directory)
+            record, _ = motion.census_file(entry, path, tools, directory, motion.SEQCTL_POLICY)
+        self.assertEqual(strict["eligible_intervals"], 0)
+        self.assertEqual(record["eligible_intervals"], 2)
+        self.assertEqual(record["packets"]["admitted_by_seqctl_policy"], 112)
+        self.assertEqual(record["oracle"], {"compared": 8, "status": "MATCH", "policy_admitted_compared": 4})
 
     def test_census_file_end_to_end(self):
         raw = pcapng(recording(seconds=12, moving=True))
@@ -324,7 +383,7 @@ class WiresharkTests(unittest.TestCase):
             path.write_bytes(raw)
             record, features = motion.census_file(entry, path, tools, directory)
             self.assertEqual(record["status"], "ADMITTED")
-            self.assertEqual(record["oracle"], {"compared": 4, "status": "MATCH"})
+            self.assertEqual(record["oracle"], {"compared": 4, "status": "MATCH", "policy_admitted_compared": 0})
             self.assertEqual(record["intervals"], 3)
             self.assertEqual(record["eligible_intervals"], 2)  # the third holds only the final 2 s
             self.assertEqual(len(features), 2)

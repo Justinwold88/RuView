@@ -7,6 +7,14 @@ name: Public BFI Motion Test
 # only aggregate numbers are uploaded.
 on:
   workflow_dispatch:
+    inputs:
+      seqctl_policy:
+        description: "none = protocol 1 (quarantine nonzero Sequence Control low bits); csi-bfi-har-c3013b3-seqctl-v1 = protocol 2 (ADR-365 Amendment 1)"
+        type: choice
+        options:
+          - none
+          - csi-bfi-har-c3013b3-seqctl-v1
+        default: none
 
 permissions:
   contents: read
@@ -43,12 +51,13 @@ jobs:
       - name: Census, decoder oracle and score
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SEQCTL_POLICY: ${{ inputs.seqctl_policy || 'none' }}
         run: |
           mkdir -p "$RUNNER_TEMP/report"
           python -B tools/bfi_learning/public_bfi_motion.py --data "$RUNNER_TEMP/public-bfi" \
             --report "$RUNNER_TEMP/report/public-bfi-motion.md" \
             --json "$RUNNER_TEMP/report/public-bfi-motion.json" \
-            --commit "$GITHUB_SHA" --run-url "$RUN_URL"
+            --commit "$GITHUB_SHA" --run-url "$RUN_URL" --seqctl-policy "$SEQCTL_POLICY"
           cat "$RUNNER_TEMP/report/public-bfi-motion.md" >> "$GITHUB_STEP_SUMMARY"
           # Also print the report (aggregate numbers only) so it can be read
           # from the run log where artifact downloads are not available.

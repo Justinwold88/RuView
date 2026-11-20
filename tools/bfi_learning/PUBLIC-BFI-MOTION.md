@@ -221,6 +221,37 @@ statistics are reported too, so readers can regroup.
   python tools/bfi_learning/public_bfi_motion.py --data /private/bfi --report report.md --json report.json
   ```
 
+## Protocol version 2 (`public-bfi-motion-2`)
+
+Frozen on 2026-11-20, after version 1's census had been seen and before any
+version 2 run.
+
+**One change.** Packet step 5 (fragment quarantine) follows
+[ADR-365 Amendment 1](../../docs/adr/ADR-365-public-bfi-dataset-and-decoder-contract.md#amendment-1--dataset-policy-for-nonzero-sequence-control-low-bits),
+policy `csi-bfi-har-c3013b3-seqctl-v1`. A frame with nonzero Sequence Control
+low bits is admitted only if all of these hold:
+- its radiotap header declares an FCS and the FCS matches
+- More Fragments is clear
+- the MAC frame is exactly one complete 1,003-byte body
+
+Otherwise it stays quarantined, with its own reason. The bytes are never
+rewritten.
+
+**Also counted:** the decoder oracle compares up to four policy-admitted
+reports per file alongside up to four fragment-zero reports, and the census
+counts the low-bit values per group.
+
+**Everything else is unchanged from version 1:**
+- data and groups
+- file admission
+- the interval rules
+- benchmark admission
+- labels, detector, controls and threshold fitting
+- held-out groups never scored
+
+The run uses the `seqctl_policy` input of the same workflow, or
+`--seqctl-policy csi-bfi-har-c3013b3-seqctl-v1` locally.
+
 ## Results
 
 Not yet run. The first run's numbers, with its workflow run link, go here.

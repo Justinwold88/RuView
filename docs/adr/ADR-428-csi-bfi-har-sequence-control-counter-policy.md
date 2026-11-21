@@ -1,7 +1,7 @@
 # ADR-428: CSI-BFI-HAR Sequence Control counter policy (amends ADR-365 and ADR-427)
 
-- **Status**: proposed (fork; written at the study owner's request, 2026-11-20; protocol 3 runs only after the study owner approves this ADR)
-- **Date**: 2026-11-20
+- **Status**: proposed (fork; accepted for the fork's public BFI test by the study owner, 2026-11-21)
+- **Date**: 2026-11-20 (accepted for the fork 2026-11-21)
 - **Deciders**: RuView maintainers; fork study owner
 - **Tags**: bfi, datasets, decoding, fragmentation, benchmarks
 

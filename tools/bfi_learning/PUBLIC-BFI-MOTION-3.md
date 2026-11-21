@@ -2,8 +2,9 @@
 
 Status: **frozen before its first run.** Results go in the section at the end,
 added after the run. Nothing above that section may change once the run has
-been dispatched. The run waits for the study owner to approve
-[ADR-428](../../docs/adr/ADR-428-csi-bfi-har-sequence-control-counter-policy.md).
+been dispatched. The study owner approved
+[ADR-428](../../docs/adr/ADR-428-csi-bfi-har-sequence-control-counter-policy.md)
+for this run on 2026-11-21.
 
 Version 3 is [version 1](PUBLIC-BFI-MOTION.md) with one change. Packet
 admission step 5, the fragment quarantine, is replaced by the named dataset

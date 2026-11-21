@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Public BFI motion test, protocol public-bfi-motion-1 (PUBLIC-BFI-MOTION.md).
+"""Public BFI motion test, protocols public-bfi-motion-1 to -3 (PUBLIC-BFI-MOTION*.md).
 
 Offline and bounded. Reads a private download made by download_public_bfi.py and
 runs the ADR-365 quality census on all four partition/view groups. Checks the
@@ -38,10 +38,15 @@ import download_public_bfi as download  # noqa: E402
 import public_bfi_decode  # noqa: E402
 
 PROTOCOL = "public-bfi-motion-1"
-PROTOCOLS = ("public-bfi-motion-1", "public-bfi-motion-2")
-# ADR-427: the only route by which a nonzero fragment number is admitted, and only in protocol 2.
+PROTOCOLS = ("public-bfi-motion-1", "public-bfi-motion-2", "public-bfi-motion-3")
+# ADR-427: the only route by which a nonzero fragment number is admitted in protocol 2.
 FRAGMENT_POLICY = "csi-bfi-har-complete-mpdu-v1"
+# ADR-428: the route in protocol 3, which reads all 16 Sequence Control bits as one counter.
+COUNTER_POLICY = "csi-bfi-har-seqctl-counter-v1"
+POLICIES = {"public-bfi-motion-1": None, "public-bfi-motion-2": FRAGMENT_POLICY,
+            "public-bfi-motion-3": COUNTER_POLICY}
 SIBLING_WINDOW_NS = 1_000_000_000
+DUPLICATE_WINDOW_NS = 1_000_000_000
 WIRESHARK_VERSION = "4.2.2"
 MAX_FILE = download.MAX_FILE
 MAX_BLOCK = 1024 * 1024
@@ -62,6 +67,11 @@ GROUPS = download.SPLITS
 FIT_GROUP, SCORE_GROUP = "train", "validation"
 SHB, IDB, OPB, SPB, EPB = 0x0A0D0D0A, 1, 2, 3, 6
 FC_GUARDS = 0xC700  # ToDS, FromDS, More Fragments, Protected, Order
+FC_MORE_FRAGMENTS = 0x0400
+# Protocol 3 diagnostic: forward steps of the 16-bit Sequence Control value between
+# consecutive candidates of the chosen direction. Reported only; never a gate.
+COUNTER_STEPS = (("counter_step_1", 1, 1), ("counter_step_2_to_16", 2, 16),
+                 ("counter_step_17_to_4096", 17, 4096))
 FC_RETRY = 0x0800
 ANGLE_PATTERN = re.compile(r"-?\d+, φ11:(\d+), φ21:(\d+), ψ21:(\d+), ψ31:(\d+)")
 CONTROL_FIELDS = (("ncindex", lambda c: c["nc"] - 1), ("nrindex", lambda c: c["nr"] - 1),
@@ -251,16 +261,54 @@ def fragment_siblings(candidates):
     return siblings
 
 
-def admit_packets(packets, oracle_reports=ORACLE_REPORTS, fragment_policy=False):
+def seqctl_duplicates(candidates):
+    """Positions of policy candidates sharing all 16 Sequence Control bits with another
+    candidate from the same pair within 1 s (ADR-428)."""
+    groups = collections.defaultdict(list)
+    for position, (_, timestamp, _, frame, pair, _) in enumerate(candidates):
+        groups[(pair, frame[22:24])].append((timestamp, position))
+    duplicates = set()
+    for members in groups.values():
+        for timestamp, position in members:
+            if candidates[position][5] and any(other != position and abs(t - timestamp) <= DUPLICATE_WINDOW_NS
+                                               for t, other in members):
+                duplicates.add(position)
+    return duplicates
+
+
+def counter_steps(candidates, pair):
+    """Diagnostic histogram of 16-bit Sequence Control steps between consecutive candidates of `pair`."""
+    steps = collections.Counter()
+    previous = None
+    for _, _, _, frame, candidate_pair, _ in candidates:
+        if candidate_pair != pair:
+            continue
+        value = int.from_bytes(frame[22:24], "little")
+        if previous is not None:
+            step = (value - previous) % 65536
+            name = next((n for n, low, high in COUNTER_STEPS if low <= step <= high), "counter_step_other")
+            steps[name] += 1
+        previous = value
+    return steps
+
+
+def admit_packets(packets, oracle_reports=ORACLE_REPORTS, fragment_policy=False, counter_policy=False):
     """Apply the nine frozen packet steps. Returns (counts, times, changes, oracle samples).
 
     changes[j] is the angle change from admitted report j-1 to j (changes[0] is None).
     With fragment_policy (protocol 2, ADR-427), step 5 admits nonzero fragment numbers only
-    as complete, CRC-checked Action No Ack frames without fragment siblings; the oracle
-    samples then hold up to `oracle_reports` fragment-zero reports and as many policy reports.
+    as complete, CRC-checked Action No Ack frames without fragment siblings. With
+    counter_policy (protocol 3, ADR-428), it admits them as complete, CRC-checked Action
+    No Ack frames when no feedback frame in the file sets More Fragments and no other
+    candidate from the same pair repeats all 16 Sequence Control bits within 1 s. With
+    either policy the oracle samples hold up to `oracle_reports` fragment-zero reports and
+    as many policy reports.
     """
+    require(not (fragment_policy and counter_policy), "conflicting_fragment_policies")
+    policy = fragment_policy or counter_policy
     counts = collections.Counter()
     candidates = []
+    more_fragments = False
     for index, (timestamp, captured, original, data) in enumerate(packets):
         if captured != original:
             counts["rejected_snaplen_truncated"] += 1
@@ -281,13 +329,15 @@ def admit_packets(packets, oracle_reports=ORACLE_REPORTS, fragment_policy=False)
             counts["other_traffic"] += 1
             continue
         if fc & FC_GUARDS:
+            if fc & FC_MORE_FRAGMENTS:
+                more_fragments = True
             counts["rejected_mac_guard_flags"] += 1
             continue
         fragment = frame[22] & 0x0F
-        if fragment_policy:
+        if policy:
             counts[f"fragment_number_{fragment:02d}"] += 1
         if fragment:
-            if not fragment_policy:
+            if not policy:
                 counts["quarantined_nonzero_fragment"] += 1
                 continue
             if (fc >> 4) & 0xF != 14:
@@ -301,12 +351,23 @@ def admit_packets(packets, oracle_reports=ORACLE_REPORTS, fragment_policy=False)
         siblings = fragment_siblings(candidates)
         counts["quarantined_fragment_sibling"] += len(siblings)
         candidates = [c for position, c in enumerate(candidates) if position not in siblings]
+    unfiltered = list(candidates)
+    if counter_policy:
+        if more_fragments:
+            refused = {position for position, c in enumerate(candidates) if c[5]}
+            counts["quarantined_file_has_more_fragments"] += len(refused)
+        else:
+            refused = seqctl_duplicates(candidates)
+            counts["quarantined_seqctl_duplicate"] += len(refused)
+        candidates = [c for position, c in enumerate(candidates) if position not in refused]
     pairs, first_seen = collections.Counter(), {}
     for position, candidate in enumerate(candidates):
         pairs[candidate[4]] += 1
         first_seen.setdefault(candidate[4], position)
     chosen = max(pairs, key=lambda pair: (pairs[pair], -first_seen[pair])) if pairs else None
     counts["candidate_pairs"] = len(pairs)
+    if counter_policy and chosen is not None:
+        counts.update(counter_steps(unfiltered, chosen))
     retry_seen, payloads = collections.OrderedDict(), set()
     times, changes, samples, policy_samples = [], [], [], []
     previous_angles = None
@@ -447,7 +508,7 @@ def tool_version(executable, product):
 
 # ---------------------------------------------------------------- census
 
-def census_file(entry, path, tools, workdir, fragment_policy=False):
+def census_file(entry, path, tools, workdir, fragment_policy=False, counter_policy=False):
     """One file's census record and its private eligible-interval features."""
     record = {"path": entry["path"], "group": entry["split"], "activity": entry["activity_code"],
               "participant": entry["participant_code"], "status": "ADMITTED"}
@@ -461,7 +522,8 @@ def census_file(entry, path, tools, workdir, fragment_policy=False):
         record["inventory"] = inventory
         packets, record["conversion"] = lossless_conversion(path, source, tools["editcap"], workdir)
         del source
-        counts, times, changes, samples = admit_packets(packets, fragment_policy=fragment_policy)
+        counts, times, changes, samples = admit_packets(packets, fragment_policy=fragment_policy,
+                                                        counter_policy=counter_policy)
         del packets
         record["packets"] = dict(sorted(counts.items()))
         intervals = observed_intervals(times)
@@ -475,7 +537,7 @@ def census_file(entry, path, tools, workdir, fragment_policy=False):
         record["eligible_seconds"] = len(features) * INTERVAL_NS / NS
         try:
             record["oracle"] = {"compared": oracle_compare(tools["tshark"], samples), "status": "MATCH"}
-            if fragment_policy:
+            if fragment_policy or counter_policy:
                 record["oracle"]["policy_compared"] = sum(
                     decoder.strip_radiotap(packet)[22] & 0x0F != 0 for packet, _ in samples)
         except DecodeError as error:
@@ -699,17 +761,23 @@ LIMITATIONS = [
 
 
 def limitations(protocol):
-    fragment = ("Nonzero-fragment frames are quarantined, as ADR-365 requires; this can reduce coverage."
-                if protocol == PROTOCOLS[0] else
-                f"Nonzero-fragment frames are admitted only under the named policy {FRAGMENT_POLICY} (ADR-427): "
-                "complete, CRC-checked Action No Ack reports without fragment siblings. Not comparable to "
-                "version 1.")
+    fragment = {
+        PROTOCOLS[0]: "Nonzero-fragment frames are quarantined, as ADR-365 requires; this can reduce coverage.",
+        PROTOCOLS[1]: f"Nonzero-fragment frames are admitted only under the named policy {FRAGMENT_POLICY} "
+                      "(ADR-427): complete, CRC-checked Action No Ack reports without fragment siblings. "
+                      "Not comparable to version 1.",
+        PROTOCOLS[2]: f"Nonzero-fragment frames are admitted only under the named policy {COUNTER_POLICY} "
+                      "(ADR-428): complete, CRC-checked Action No Ack reports, in files with no More "
+                      "Fragments frame, without a repeated 16-bit Sequence Control value. Not comparable "
+                      "to versions 1 or 2.",
+    }[protocol]
     return [fragment if item == "FRAGMENT_LIMITATION" else item for item in LIMITATIONS]
 
 
 def run(root, tools, commit, run_url, log=print, protocol=PROTOCOL):
     require(protocol in PROTOCOLS, "unknown_protocol")
-    policy = protocol == "public-bfi-motion-2"
+    policy_name = POLICIES[protocol]
+    policy = policy_name is not None
     manifest, _ = download.load_manifest(root / "source-manifest.json")
     receipt = json.loads(download.read_bounded(root / "download-receipt.json", download.MAX_RECEIPT))
     require(receipt.get("status") == "COMPLETED" and receipt.get("manifest_sha256") == download.MANIFEST_SHA256,
@@ -724,7 +792,8 @@ def run(root, tools, commit, run_url, log=print, protocol=PROTOCOL):
         os.chmod(workdir, 0o700)
         for number, entry in enumerate(entries, 1):
             record, file_features = census_file(entry, download.destination(root, entry["path"]), tools, workdir,
-                                                fragment_policy=policy)
+                                                fragment_policy=policy_name == FRAGMENT_POLICY,
+                                                counter_policy=policy_name == COUNTER_POLICY)
             records.append(record)
             features.append(file_features)
             detail = record.get("reason") or f"eligible_intervals={record.get('eligible_intervals', 0)}"
@@ -739,7 +808,7 @@ def run(root, tools, commit, run_url, log=print, protocol=PROTOCOL):
             gate["reasons"].append("fragment_policy_oracle_compared_nothing")
             gate["admitted"] = False
             scores = None
-    return {"protocol": protocol, "fragment_policy": FRAGMENT_POLICY if policy else None,
+    return {"protocol": protocol, "fragment_policy": policy_name,
             "evidence": "MEASURED",
             "data": "public CSI-BFI-HAR BFI captures (GPL-3.0 dataset; data not redistributed)",
             "dataset_revision": download.REVISION, "manifest_sha256": download.MANIFEST_SHA256,
@@ -762,7 +831,8 @@ def main(argv=None):
     parser.add_argument("--commit", default=os.environ.get("GITHUB_SHA", "unknown"))
     parser.add_argument("--run-url", default="local run")
     parser.add_argument("--protocol", choices=PROTOCOLS, default=PROTOCOL,
-                        help="public-bfi-motion-2 adds the ADR-427 fragment policy")
+                        help="public-bfi-motion-2 adds the ADR-427 fragment policy; "
+                             "public-bfi-motion-3 the ADR-428 Sequence Control counter policy")
     args = parser.parse_args(argv)
     try:
         tools = {name: shutil.which(getattr(args, name)) for name in ("tshark", "editcap")}

@@ -2,17 +2,18 @@ name: Public BFI Motion Test
 
 # Manual only. Downloads the pinned public CSI-BFI-HAR BFI captures (GPL-3.0
 # dataset) onto the runner, runs the ADR-365 census and decoder oracle, and
-# scores moving vs still only if the benchmark is admitted. Protocol:
-# tools/bfi_learning/PUBLIC-BFI-MOTION.md. Data never leaves the runner;
+# scores moving vs still only if the benchmark is admitted. Protocols:
+# tools/bfi_learning/PUBLIC-BFI-MOTION*.md. Data never leaves the runner;
 # only aggregate numbers are uploaded.
 on:
   workflow_dispatch:
     inputs:
       protocol:
-        description: 'Frozen protocol: public-bfi-motion-1 (strict ADR-365) or public-bfi-motion-2 (ADR-427 fragment policy)'
+        description: 'Frozen protocol: public-bfi-motion-1 (strict ADR-365), public-bfi-motion-2 (ADR-427 fragment policy) or public-bfi-motion-3 (ADR-428 Sequence Control counter policy)'
         type: choice
         options:
           - public-bfi-motion-2
+          - public-bfi-motion-3
           - public-bfi-motion-1
         default: public-bfi-motion-2
 

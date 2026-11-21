@@ -234,5 +234,9 @@ The pet episodes and sleep are labelled as they happen.
 
 | Role | Name | Date |
 |---|---|---|
-| Study owner (home and hardware) | | |
-| Reviewer | | |
+| Study owner (home and hardware) | Justin Wold | Pending: signs when the boards and mmWave module arrive |
+| Reviewer | TBD | |
+
+Names recorded 2026-11-21. The protocol stays PROPOSED until the study
+owner signs with a date. Still open at that point: the reviewer, and whether
+empty-home intervals that the mmWave reference contradicts still count.

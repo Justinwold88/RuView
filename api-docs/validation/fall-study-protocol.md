@@ -124,5 +124,8 @@ aggregate numbers only.
 
 | Role | Name | Date |
 |---|---|---|
-| Study owner | | |
-| Spotter | | |
+| Study owner | Justin Wold | Pending: signs when the boards arrive |
+| Spotter | TBD | |
+
+Names recorded 2026-11-21. The protocol stays PROPOSED until the study
+owner signs with a date and a spotter is named.

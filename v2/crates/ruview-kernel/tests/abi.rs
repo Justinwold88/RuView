@@ -269,3 +269,61 @@ fn flat_binary_path_validates_shape_and_values() {
     .unwrap();
     assert_eq!(v["result"]["summary"]["frames"], 0);
 }
+
+/// The vitals method is a session choice; the classic ADR-021 pipeline stays
+/// the default and is unchanged. SYNTHETIC.
+#[test]
+fn vitals_method_is_a_choice_with_classic_as_the_default() {
+    assert_eq!(SessionConfig::default().vitals_method, "classic");
+    let info = ok("info", json!({}));
+    assert_eq!(info["vitals_methods"]["default"], "classic");
+    assert!(info["vitals_methods"]["detector"].is_string());
+
+    let frames = synthesize(&SynthRequest {
+        seconds: 90.0,
+        ..SynthRequest::default()
+    })
+    .unwrap();
+    let frames = serde_json::to_value(&frames).unwrap();
+    let run = |method: Option<&str>| {
+        let mut config = json!({});
+        if let Some(m) = method {
+            config["vitals_method"] = json!(m);
+        }
+        ok(
+            "analyze",
+            json!({ "config": config, "frames": frames, "include_readings": true }),
+        )
+    };
+    let default = run(None);
+    let classic = run(Some("classic"));
+    assert_eq!(
+        default["summary"], classic["summary"],
+        "classic is the default"
+    );
+    assert_eq!(default["config"]["vitals_method"], "classic");
+
+    let detector = run(Some("detector"));
+    assert_eq!(detector["config"]["vitals_method"], "detector");
+    let readings = detector["readings"].as_array().unwrap();
+    assert_eq!(readings.len(), 90, "same emission cadence as classic");
+    let last = &readings[89]["respiratory"];
+    assert_eq!(last["status"], "valid", "{last}");
+    let bpm = last["bpm"].as_f64().unwrap();
+    assert!((bpm - 15.0).abs() < 1.0, "detector breathing {bpm}");
+
+    assert_eq!(
+        err_code(
+            "analyze",
+            &json!({ "config": { "vitals_method": "fft" }, "frames": [] }).to_string()
+        ),
+        "invalid_request"
+    );
+    assert_eq!(
+        err_code(
+            "session_open",
+            &json!({ "config": { "vitals_method": 3 } }).to_string()
+        ),
+        "invalid_request"
+    );
+}

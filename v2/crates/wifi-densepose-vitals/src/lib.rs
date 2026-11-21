@@ -29,6 +29,10 @@
 //! breathing evidence behind the server's still-person hold (plan item 1.3).
 //! The server re-exports it as `wifi_densepose_sensing_server::vital_signs`.
 //!
+//! [`VitalsEstimator`] ([`method`]) runs either method behind one interface,
+//! chosen with [`VitalsMethod`]: `classic` (the pipeline above, the default)
+//! or `detector`. `ruview-kernel` and the Python bindings expose this choice.
+//!
 //! Ground-truth evaluation ([`groundtruth`], ADR-293) ingests a
 //! reference-device series (CSV export), time-aligns it against a store
 //! session, and produces evidence-graded agreement statistics
@@ -82,6 +86,7 @@ pub mod breathing;
 pub mod detector;
 pub mod groundtruth;
 pub mod heartrate;
+pub mod method;
 pub mod preprocessor;
 pub mod store;
 pub mod types;
@@ -96,6 +101,7 @@ pub use groundtruth::{
     ReferenceSample, ReferenceSeries, SessionEvaluation, SessionScope,
 };
 pub use heartrate::HeartRateExtractor;
+pub use method::{EstimatorSettings, EstimatorStep, VitalsEstimator, VitalsMethod};
 pub use preprocessor::CsiVitalPreprocessor;
 pub use store::{VitalSignStore, VitalStats};
 pub use types::{CsiFrame, VitalEstimate, VitalReading, VitalStatus};

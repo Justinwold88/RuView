@@ -18,7 +18,7 @@ pub enum VitalStatus {
 }
 
 /// A single vital sign estimate.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct VitalEstimate {
     /// Estimated value in BPM (beats/breaths per minute).

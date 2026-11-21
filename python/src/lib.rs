@@ -48,6 +48,7 @@ fn build_features() -> Vec<&'static str> {
     feats.push("p2-keypoint-bindings"); // Keypoint + KeypointType
     feats.push("p2-pose-bindings"); // BoundingBox + PersonPose + PoseEstimate
     feats.push("p3-vitals-bindings"); // BreathingExtractor + HeartRateExtractor + VitalEstimate
+    feats.push("vitals-method-choice"); // VitalsEstimator(method="classic"|"detector") + VitalSignDetector
     feats.push("p3.5-bfld-bindings"); // BfldFrame + BfldReport + BfldKind (stub Rust)
     #[cfg(feature = "aether")]
     feats.push("p6-aether-bindings"); // ADR-185 P1 — AETHER contrastive embeddings

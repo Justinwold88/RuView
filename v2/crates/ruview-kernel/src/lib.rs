@@ -16,7 +16,9 @@
 //!
 //! The signal path is the ADR-021 vitals pipeline from
 //! `wifi-densepose-vitals` (EMA preprocessing, breathing and heart-rate
-//! extraction, anomaly detection). Every input is untrusted: sizes, lengths,
+//! extraction, anomaly detection). A session can choose the sensing
+//! server's `VitalSignDetector` instead with `vitals_method: "detector"`;
+//! `"classic"` stays the default. Every input is untrusted: sizes, lengths,
 //! and numeric ranges are validated before any processing, so the core never
 //! panics on caller data (release builds use `panic = "abort"`).
 //!
@@ -29,8 +31,8 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use wifi_densepose_vitals::{
-    BreathingExtractor, CsiFrame, CsiVitalPreprocessor, HeartRateExtractor, VitalAnomalyDetector,
-    VitalEstimate, VitalReading, VitalSignStore, VitalStatus,
+    EstimatorSettings, VitalAnomalyDetector, VitalEstimate, VitalReading, VitalSignStore,
+    VitalStatus, VitalsEstimator, VitalsMethod,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -101,6 +103,10 @@ pub struct SessionConfig {
     pub preprocess_alpha: f64,
     /// Emit one vital reading every `emit_every` frames (0 = once per second).
     pub emit_every: usize,
+    /// Vitals method: `"classic"` (the ADR-021 pipeline, the default) or
+    /// `"detector"` (the sensing server's `VitalSignDetector`). The window
+    /// settings apply to `"classic"` only.
+    pub vitals_method: String,
 }
 
 impl Default for SessionConfig {
@@ -112,6 +118,7 @@ impl Default for SessionConfig {
             heart_window_secs: 15.0,
             preprocess_alpha: 0.05,
             emit_every: 0,
+            vitals_method: VitalsMethod::Classic.as_str().to_string(),
         }
     }
 }
@@ -126,6 +133,13 @@ fn finite_in(name: &str, v: f64, lo: f64, hi: f64) -> KResult<()> {
 }
 
 impl SessionConfig {
+    /// The chosen vitals method.
+    pub fn method(&self) -> KResult<VitalsMethod> {
+        self.vitals_method
+            .parse()
+            .map_err(|_| KernelError::invalid("vitals_method must be \"classic\" or \"detector\""))
+    }
+
     /// Validate ranges; returns the effective emission interval in frames.
     pub fn validate(&self) -> KResult<usize> {
         if self.n_subcarriers == 0 || self.n_subcarriers > MAX_SUBCARRIERS {
@@ -142,6 +156,7 @@ impl SessionConfig {
         )?;
         finite_in("heart_window_secs", self.heart_window_secs, 5.0, 120.0)?;
         finite_in("preprocess_alpha", self.preprocess_alpha, 0.001, 1.0)?;
+        self.method()?;
         if self.emit_every > MAX_FRAMES_PER_CALL {
             return Err(KernelError::invalid(format!(
                 "emit_every must be <= {MAX_FRAMES_PER_CALL}"
@@ -236,16 +251,14 @@ pub struct Summary {
 // Session
 // ---------------------------------------------------------------------------
 
-/// Streaming analysis session over the ADR-021 vitals pipeline.
+/// Streaming analysis session over the chosen vitals method (ADR-021
+/// pipeline by default).
 pub struct Session {
     config: SessionConfig,
     emit_every: usize,
-    pre: CsiVitalPreprocessor,
-    breathing: BreathingExtractor,
-    heart: HeartRateExtractor,
+    vitals: VitalsEstimator,
     anomaly: VitalAnomalyDetector,
     store: VitalSignStore,
-    weights: Vec<f64>,
     frames: u64,
     readings: u64,
     alerts: u64,
@@ -258,18 +271,18 @@ pub struct Session {
 impl Session {
     pub fn new(config: SessionConfig) -> KResult<Self> {
         let emit_every = config.validate()?;
-        let n = config.n_subcarriers;
+        let settings = EstimatorSettings {
+            method: config.method()?,
+            n_subcarriers: config.n_subcarriers,
+            sample_rate_hz: config.sample_rate_hz,
+            breathing_window_secs: config.breathing_window_secs,
+            heart_window_secs: config.heart_window_secs,
+            preprocess_alpha: config.preprocess_alpha,
+        };
         Ok(Self {
-            pre: CsiVitalPreprocessor::new(n, config.preprocess_alpha),
-            breathing: BreathingExtractor::new(
-                n,
-                config.sample_rate_hz,
-                config.breathing_window_secs,
-            ),
-            heart: HeartRateExtractor::new(n, config.sample_rate_hz, config.heart_window_secs),
+            vitals: VitalsEstimator::new(settings),
             anomaly: VitalAnomalyDetector::default_config(),
             store: VitalSignStore::new(3600),
-            weights: vec![1.0 / n as f64; n],
             emit_every,
             frames: 0,
             readings: 0,
@@ -372,23 +385,14 @@ impl Session {
     /// Process one validated frame; returns a reading at emission boundaries.
     fn step(&mut self, amplitudes: &[f64], phases: Option<&[f64]>) -> Option<Reading> {
         let n = self.config.n_subcarriers;
-        let frame = CsiFrame {
-            amplitudes: amplitudes.to_vec(),
-            phases: phases.map_or_else(|| vec![0.0; n], <[f64]>::to_vec),
-            n_subcarriers: n,
-            sample_index: self.frames,
-            sample_rate_hz: self.config.sample_rate_hz,
-        };
         self.frames += 1;
-        let residuals = self.pre.process(&frame)?;
-        let motion = (residuals.iter().map(|r| r * r).sum::<f64>() / n as f64).sqrt();
+        // The classic method does exactly what this function did before
+        // `VitalsEstimator` existed (see its `classic_matches_*` test).
+        let step = self.vitals.process(amplitudes, phases)?;
+        let motion = step.residual_rms;
         self.motion_sum += motion;
-        if let Some(rr) = self.breathing.extract(&residuals, &self.weights) {
-            self.last_rr = rr;
-        }
-        if let Some(hr) = self.heart.extract(&residuals, &frame.phases) {
-            self.last_hr = hr;
-        }
+        self.last_rr = step.respiratory_rate;
+        self.last_hr = step.heart_rate;
         if self.frames % self.emit_every as u64 != 0 {
             return None;
         }
@@ -648,6 +652,11 @@ pub fn info() -> Value {
         "abi": ABI_VERSION,
         "operations": OPERATIONS,
         "pipeline": "ADR-021 vitals (wifi-densepose-vitals): EMA preprocessing, breathing 0.1-0.5 Hz, heart 0.8-2.0 Hz, anomaly z-score",
+        "vitals_methods": {
+            "default": VitalsMethod::default().as_str(),
+            "classic": "ADR-021 pipeline: EMA residuals, 0.1-0.5 Hz breathing extractor, 0.8-2.0 Hz heart-rate extractor",
+            "detector": "the sensing server's VitalSignDetector: per-subcarrier breathing streams combined by PCA, FFT heart rate, spectra once per second",
+        },
         "limits": {
             "max_input_bytes": MAX_INPUT_BYTES,
             "max_subcarriers": MAX_SUBCARRIERS,

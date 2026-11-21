@@ -51,6 +51,28 @@ const readings = session.push(frames.slice(0, 200));
 session.close();
 ```
 
+### Choosing a vitals method
+
+Every session runs one vitals method, set with `vitals_method` in the config:
+
+- `"classic"` (the default): the ADR-021 pipeline, unchanged.
+- `"detector"`: the RuView sensing server's detector (per-subcarrier breathing
+  streams combined by PCA, FFT heart rate). The window settings apply to
+  `"classic"` only.
+
+```js
+const report = kernel.analyze(frames, { n_subcarriers: 56, vitals_method: 'detector' });
+console.log(kernel.info().vitals_methods);   // default + a description of each
+```
+
+On the repository's scenario harness (SYNTHETIC, not hardware), breathing
+error was 9–12 BPM for `classic`, which often gave no estimate, against
+0.03–0.08 BPM for `detector`. Heart rate is no better than a constant guess
+for either. **Classic is not going away on its own.** It stays the default so nothing
+changes for existing users. If the detector works better for you (or worse),
+please say so in an issue. Retiring the classic method would be a separate,
+later proposal, made only if users agree.
+
 ### Binary fast path
 
 `analyze()` and `session.push()` automatically send uniform frames as one

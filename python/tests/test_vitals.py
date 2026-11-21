@@ -291,3 +291,111 @@ def test_issue_2057_filtering_does_not_promote_noise() -> None:
 
 def test_p3_vitals_in_build_features() -> None:
     assert "p3-vitals-bindings" in wifi_densepose.__build_features__
+    assert "vitals-method-choice" in wifi_densepose.__build_features__
+
+
+# ─── Choice of vitals method (plan item 4.1) ─────────────────────────
+
+
+def _breathing_frames(seconds: int = 40, bpm: float = 15.0, fs: float = 20.0):
+    """SYNTHETIC: 56 subcarriers with a breathing ripple and a little noise."""
+    rng = np.random.default_rng(3)
+    for i in range(int(seconds * fs)):
+        breath = math.sin(2.0 * math.pi * bpm / 60.0 * i / fs)
+        k = np.arange(56)
+        amps = 10.0 + 0.5 * breath * (1.0 + 0.01 * k) + 0.01 * rng.standard_normal(56)
+        phases = 0.02 * k + 0.05 * breath
+        yield amps.tolist(), phases.tolist()
+
+
+def test_vitals_methods_list_classic_first() -> None:
+    from wifi_densepose import VitalsEstimator
+
+    assert VitalsEstimator.methods() == ["classic", "detector"]
+    assert VitalsEstimator().method == "classic"
+
+
+def test_classic_estimator_matches_the_three_classes() -> None:
+    from wifi_densepose import CsiVitalPreprocessor, VitalsEstimator
+
+    est = VitalsEstimator(method="classic", n_subcarriers=56, sample_rate=20.0)
+    pre = CsiVitalPreprocessor(56, alpha=0.05)
+    br = BreathingExtractor(56, 20.0, window_secs=30.0)
+    hr = HeartRateExtractor(56, 20.0, window_secs=15.0)
+    weights = [1.0 / 56] * 56
+    rr_ref = hr_ref = None
+    for amps, phases in _breathing_frames():
+        reading = est.process(amps, phases)
+        residuals = pre.process(amps)
+        rr_ref = br.extract(residuals, weights) or rr_ref
+        hr_ref = hr.extract(residuals, phases) or hr_ref
+    assert isinstance(reading, VitalReading)
+    assert rr_ref is not None
+    assert reading.respiratory_rate.value_bpm == rr_ref.value_bpm
+    assert reading.respiratory_rate.confidence == rr_ref.confidence
+    assert est.frames == 800
+    assert reading.timestamp_secs == pytest.approx(40.0)
+
+
+def test_detector_estimator_finds_the_breathing_rate() -> None:
+    from wifi_densepose import VitalsEstimator
+
+    est = VitalsEstimator(method="detector", n_subcarriers=56, sample_rate=20.0)
+    for amps, phases in _breathing_frames():
+        reading = est.process(amps, phases)
+    rr = reading.respiratory_rate
+    assert rr.status != VitalStatus.Unavailable
+    assert abs(rr.value_bpm - 15.0) < 1.0
+
+
+def test_detector_runs_without_phases() -> None:
+    from wifi_densepose import VitalsEstimator
+
+    est = VitalsEstimator(method="detector")
+    for amps, _ in _breathing_frames(seconds=5):
+        reading = est.process(amps)
+    assert reading is not None
+
+
+def test_vital_sign_detector_direct() -> None:
+    from wifi_densepose import VitalSignDetector, VitalSigns
+
+    det = VitalSignDetector(sample_rate=20.0)
+    for amps, phases in _breathing_frames():
+        signs = det.process_frame(amps, phases)
+    assert isinstance(signs, VitalSigns)
+    assert signs.breathing_rate_bpm is not None
+    assert abs(signs.breathing_rate_bpm - 15.0) < 1.0
+    assert 0.0 <= signs.breathing_confidence <= 1.0
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "frame"),
+    [
+        ({"method": "fft"}, None),
+        ({"n_subcarriers": 0}, None),
+        ({"sample_rate": float("nan")}, None),
+        ({"alpha": 2.0}, None),
+        ({}, ([1.0] * 55, None)),
+        ({}, ([1.0] * 56, [0.0] * 3)),
+        ({}, ([float("inf")] + [1.0] * 55, None)),
+    ],
+)
+def test_vitals_estimator_rejects_bad_input(kwargs, frame) -> None:
+    from wifi_densepose import VitalsEstimator
+
+    with pytest.raises(ValueError):
+        est = VitalsEstimator(**kwargs)
+        est.process(*frame)
+
+
+def test_vital_sign_detector_rejects_bad_frames() -> None:
+    from wifi_densepose import VitalSignDetector
+
+    det = VitalSignDetector()
+    with pytest.raises(ValueError):
+        det.process_frame([], [])
+    with pytest.raises(ValueError):
+        det.process_frame([1.0, 2.0], [0.0])
+    with pytest.raises(ValueError):
+        det.process_frame([1.0, float("nan")], [])

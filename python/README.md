@@ -105,6 +105,45 @@ print("heart:    ", heart)
 
 The signal is synthetic; this shows the API, not accuracy on real CSI.
 
+### Choosing a vitals method
+
+`VitalsEstimator` runs whichever method you pick, one frame at a time, and
+returns the same `VitalReading` either way:
+
+- `method="classic"` (the default): the three classes above,
+  `CsiVitalPreprocessor` → `BreathingExtractor` / `HeartRateExtractor`.
+- `method="detector"`: the detector the RuView sensing server runs
+  (per-subcarrier breathing streams combined by PCA, FFT heart rate). It is
+  also available directly as `VitalSignDetector`.
+
+```python
+from wifi_densepose import VitalsEstimator
+
+print(VitalsEstimator.methods())  # ['classic', 'detector']
+est = VitalsEstimator(method="detector", n_subcarriers=56, sample_rate=20.0)
+for amplitudes, phases in frames:  # your CSI frames; phases may be None
+    reading = est.process(amplitudes, phases)
+print(reading.respiratory_rate.value_bpm, reading.respiratory_rate.status)
+```
+
+On the repository's scenario harness (SYNTHETIC: 72 simulated rooms at 20 Hz,
+not real hardware), breathing error was:
+
+| Reflection strength | Breathing error, `classic` | Breathing error, `detector` |
+|---|---|---|
+| −10 dB | 9.08 BPM (no estimate in 12 of 24 scenarios) | 0.03 BPM (0 of 24) |
+| −15 dB | 11.59 BPM (16 of 24) | 0.04 BPM (0 of 24) |
+| −20 dB | 8.97 BPM (22 of 24) | 0.08 BPM (0 of 24) |
+
+Heart rate is no better than a constant guess for either method on these
+rooms, so treat it as experimental. No method has been MEASURED on real
+hardware yet.
+
+**Classic is not going away on its own.** It stays the default so nothing
+changes for existing users. If the detector works better for you (or worse),
+please say so in an issue. Retiring the classic method would be a separate,
+later proposal, made only if users agree.
+
 ## Usage
 
 ### Extract breathing rate from a CSI stream

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Choose your vitals method: `classic` (default) or `detector` (plan item
+  4.1).** The vitals crate's new `VitalsEstimator` runs either method behind
+  one interface, chosen with `VitalsMethod`:
+  - `classic` is the ADR-021 pipeline (`CsiVitalPreprocessor` →
+    `BreathingExtractor` / `HeartRateExtractor`), unchanged and still the
+    default.
+  - `detector` is the sensing server's `VitalSignDetector`.
+
+  Both report `VitalEstimate`s with the classic status thresholds. Where to
+  pick it:
+  - **`ruview-kernel`:** the session setting `vitals_method`. `info` lists
+    the methods.
+  - **Python:** `VitalsEstimator(method=...)`, plus `VitalSignDetector` and
+    `VitalSigns`.
+
+  Nothing is removed and existing users see no change.
+  - **Classic output unchanged:** kernel `analyze` output is byte-for-byte
+    identical on six synthesized inputs, apart from the new `vitals_method`
+    field in the echoed config. The estimator's classic path matches the
+    three classes wired by hand.
+  - **SYNTHETIC (scenario harness):** breathing error 9.08 / 11.59 / 8.97 BPM
+    for `classic` against 0.03 / 0.04 / 0.08 BPM for `detector`.
+  - **Feedback:** the READMEs invite users to say whether the classic method
+    should later be retired.
+
 - **Breaking: fall detection is hidden from Home Assistant by default
   (plan item 2.6).** The `fall` event and the `fall_risk_elevated` sensor
   (which counts recent falls) are announced only with `--mqtt-publish-fall`

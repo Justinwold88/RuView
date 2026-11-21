@@ -58,6 +58,37 @@ Accuracy figures for this detector are SYNTHETIC (the server's scenario harness)
 MEASURED on hardware yet. The older `BreathingExtractor` / `HeartRateExtractor` pipeline above
 is a separate implementation, used by `ruview-kernel` and the Python bindings.
 
+### Choosing a method
+
+`VitalsEstimator` (`method.rs`) runs either method behind one interface, chosen with
+`VitalsMethod`: `Classic` (the pipeline above, the default) or `Detector`. Both return
+`VitalEstimate`s with the classic status thresholds. `ruview-kernel` exposes the choice as the
+session setting `vitals_method`, and the Python bindings as `VitalsEstimator(method=...)`.
+
+```rust
+use wifi_densepose_vitals::{EstimatorSettings, VitalsEstimator, VitalsMethod};
+
+let mut est = VitalsEstimator::new(EstimatorSettings::new(VitalsMethod::Detector, 56, 20.0));
+let amplitudes = vec![1.0; 56];
+if let Some(step) = est.process(&amplitudes, None) {
+    println!("{:?}", step.respiratory_rate);
+}
+```
+
+The sensing server's scenario harness reports both on the same 72 simulated rooms
+(SYNTHETIC):
+
+| Reflection strength | Breathing error, `classic` | Breathing error, `detector` |
+|---|---|---|
+| −10 dB | 9.08 BPM (no estimate in 12 of 24 scenarios) | 0.03 BPM (0 of 24) |
+| −15 dB | 11.59 BPM (16 of 24) | 0.04 BPM (0 of 24) |
+| −20 dB | 8.97 BPM (22 of 24) | 0.08 BPM (0 of 24) |
+
+**Classic is not going away on its own.** It stays the default so nothing
+changes for existing users. If the detector works better for you (or worse),
+please say so in an issue. Retiring the classic method would be a separate,
+later proposal, made only if users agree.
+
 Heart-rate regression fixtures include breathing without a heartbeat, mixed
 breathing and pulse signals, noise, and pulses at the cardiac band edges. These
 are synthetic software checks, not real-CSI accuracy or clinical validation.

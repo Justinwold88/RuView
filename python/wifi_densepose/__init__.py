@@ -52,6 +52,10 @@ VitalReading = _native.VitalReading
 CsiVitalPreprocessor = _native.CsiVitalPreprocessor
 BreathingExtractor = _native.BreathingExtractor
 HeartRateExtractor = _native.HeartRateExtractor
+# Choice of vitals method (plan item 4.1): "classic" (the default) or "detector".
+VitalsEstimator = _native.VitalsEstimator
+VitalSignDetector = _native.VitalSignDetector
+VitalSigns = _native.VitalSigns
 
 # ─── P3.5 — BFLD (Beamforming Feedback Loop Data) ─────────────────────
 BfldKind = _native.BfldKind
@@ -113,6 +117,9 @@ __all__ = [
     "CsiVitalPreprocessor",
     "BreathingExtractor",
     "HeartRateExtractor",
+    "VitalsEstimator",
+    "VitalSignDetector",
+    "VitalSigns",
     # P3.5 — BFLD (forward-compat surface for the future Rust crate)
     "BfldKind",
     "BfldFrame",

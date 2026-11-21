@@ -7,6 +7,11 @@
 //! - `VitalReading` — combined HR + BR + signal quality snapshot
 //! - `BreathingExtractor` — bandpass 0.1–0.5 Hz → respiratory rate
 //! - `HeartRateExtractor` — bandpass 0.8–2.0 Hz + autocorrelation → HR
+//! - `VitalsEstimator` — one interface over a choice of vitals method:
+//!   `"classic"` (the three classes above, the default) or `"detector"`
+//!   (the sensing server's detector). Plan item 4.1.
+//! - `VitalSignDetector` / `VitalSigns` — the sensing server's detector
+//!   itself (PCA breathing, FFT heart rate)
 //!
 //! ## GIL release strategy (per ADR-117 §7 and the Q5 audit on
 //! 2026-05-24)
@@ -17,11 +22,13 @@
 //! tokio-backed web server without GIL contention starving the
 //! event loop.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use wifi_densepose_vitals::{
-    BreathingExtractor, CsiFrame, CsiVitalPreprocessor, HeartRateExtractor, VitalEstimate,
-    VitalReading, VitalStatus,
+    BreathingExtractor, CsiFrame, CsiVitalPreprocessor, EstimatorSettings, HeartRateExtractor,
+    VitalEstimate, VitalReading, VitalSignDetector, VitalSigns, VitalStatus, VitalsEstimator,
+    VitalsMethod,
 };
 
 // ─── VitalStatus enum ────────────────────────────────────────────────
@@ -368,6 +375,241 @@ impl PyHeartRateExtractor {
     }
 }
 
+// ─── VitalsEstimator (choice of method) ──────────────────────────────
+
+/// Upper bound on subcarriers per frame, as in `ruview-kernel`.
+const MAX_SUBCARRIERS: usize = 4096;
+
+fn check_range(name: &str, v: f64, lo: f64, hi: f64) -> PyResult<()> {
+    if !v.is_finite() || v < lo || v > hi {
+        return Err(PyValueError::new_err(format!(
+            "{name} must be a finite number in [{lo}, {hi}]"
+        )));
+    }
+    Ok(())
+}
+
+/// Runs the vitals method you choose, frame by frame, and keeps the latest
+/// breathing and heart-rate estimates.
+///
+/// - `method="classic"` (the default): the ADR-021 pipeline that
+///   `CsiVitalPreprocessor`, `BreathingExtractor` and `HeartRateExtractor`
+///   implement. Results are the same as wiring those three by hand with
+///   uniform weights.
+/// - `method="detector"`: the sensing server's `VitalSignDetector`. In the
+///   repository's scenario harness (SYNTHETIC, not hardware) its breathing
+///   error is far lower; see the README's "Choosing a vitals method".
+///
+/// The window settings apply to `"classic"` only. Both methods report the
+/// same `VitalReading` type, with the classic status thresholds.
+///
+/// Python:
+/// ```python
+/// from wifi_densepose import VitalsEstimator
+///
+/// est = VitalsEstimator(method="detector", n_subcarriers=56, sample_rate=20.0)
+/// for amplitudes, phases in frames:          # one CSI frame at a time
+///     reading = est.process(amplitudes, phases)
+/// print(reading.respiratory_rate.value_bpm, reading.respiratory_rate.status)
+/// ```
+#[pyclass(name = "VitalsEstimator")]
+pub struct PyVitalsEstimator {
+    inner: VitalsEstimator,
+}
+
+#[pymethods]
+impl PyVitalsEstimator {
+    #[new]
+    #[pyo3(signature = (
+        method="classic",
+        n_subcarriers=56,
+        sample_rate=20.0,
+        breathing_window_secs=30.0,
+        heart_window_secs=15.0,
+        alpha=0.05,
+    ))]
+    fn new(
+        method: &str,
+        n_subcarriers: usize,
+        sample_rate: f64,
+        breathing_window_secs: f64,
+        heart_window_secs: f64,
+        alpha: f64,
+    ) -> PyResult<Self> {
+        let method: VitalsMethod = method.parse().map_err(PyValueError::new_err)?;
+        if n_subcarriers == 0 || n_subcarriers > MAX_SUBCARRIERS {
+            return Err(PyValueError::new_err(format!(
+                "n_subcarriers must be in [1, {MAX_SUBCARRIERS}]"
+            )));
+        }
+        check_range("sample_rate", sample_rate, 1.0, 1000.0)?;
+        check_range("breathing_window_secs", breathing_window_secs, 10.0, 300.0)?;
+        check_range("heart_window_secs", heart_window_secs, 5.0, 120.0)?;
+        check_range("alpha", alpha, 0.001, 1.0)?;
+        Ok(Self {
+            inner: VitalsEstimator::new(EstimatorSettings {
+                method,
+                n_subcarriers,
+                sample_rate_hz: sample_rate,
+                breathing_window_secs,
+                heart_window_secs,
+                preprocess_alpha: alpha,
+            }),
+        })
+    }
+
+    /// The methods you can choose from; the first is the default.
+    #[staticmethod]
+    fn methods() -> Vec<&'static str> {
+        VitalsMethod::ALL.iter().map(|m| m.as_str()).collect()
+    }
+
+    /// The method this estimator runs.
+    #[getter]
+    fn method(&self) -> &'static str { self.inner.method().as_str() }
+
+    /// Frames processed so far.
+    #[getter]
+    fn frames(&self) -> u64 { self.inner.frames() }
+
+    /// Process one frame. `amplitudes` must have `n_subcarriers` values;
+    /// `phases` (radians) may be `None` or have the same length. Returns the
+    /// latest `VitalReading`. GIL released during DSP.
+    #[pyo3(signature = (amplitudes, phases=None))]
+    fn process(
+        &mut self,
+        py: Python<'_>,
+        amplitudes: Vec<f64>,
+        phases: Option<Vec<f64>>,
+    ) -> PyResult<Option<PyVitalReading>> {
+        let settings = *self.inner.settings();
+        let n = settings.n_subcarriers;
+        if amplitudes.len() != n {
+            return Err(PyValueError::new_err(format!(
+                "amplitudes must have {n} values (got {})",
+                amplitudes.len()
+            )));
+        }
+        if let Some(p) = &phases {
+            if p.len() != n {
+                return Err(PyValueError::new_err(format!(
+                    "phases must be None or have {n} values (got {})",
+                    p.len()
+                )));
+            }
+        }
+        if amplitudes
+            .iter()
+            .chain(phases.iter().flatten())
+            .any(|v| !v.is_finite())
+        {
+            return Err(PyValueError::new_err("frame contains a non-finite value"));
+        }
+        let step = py.detach(|| self.inner.process(&amplitudes, phases.as_deref()));
+        let frames = self.inner.frames();
+        Ok(step.map(|s| PyVitalReading {
+            inner: VitalReading {
+                signal_quality: (s.respiratory_rate.confidence + s.heart_rate.confidence) / 2.0,
+                respiratory_rate: s.respiratory_rate,
+                heart_rate: s.heart_rate,
+                subcarrier_count: n,
+                timestamp_secs: frames as f64 / settings.sample_rate_hz,
+            },
+        }))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "VitalsEstimator(method={:?}, n_subcarriers={}, sample_rate={})",
+            self.inner.method().as_str(),
+            self.inner.settings().n_subcarriers,
+            self.inner.settings().sample_rate_hz,
+        )
+    }
+}
+
+// ─── VitalSignDetector (the server's detector) ───────────────────────
+
+/// Output of `VitalSignDetector.process_frame`.
+#[pyclass(frozen, name = "VitalSigns")]
+pub struct PyVitalSigns {
+    inner: VitalSigns,
+}
+
+#[pymethods]
+impl PyVitalSigns {
+    /// Breathing rate in breaths per minute, or `None` if not detected.
+    #[getter]
+    fn breathing_rate_bpm(&self) -> Option<f64> { self.inner.breathing_rate_bpm }
+
+    /// Heart rate in beats per minute, or `None` if not detected.
+    #[getter]
+    fn heart_rate_bpm(&self) -> Option<f64> { self.inner.heart_rate_bpm }
+
+    #[getter]
+    fn breathing_confidence(&self) -> f64 { self.inner.breathing_confidence }
+
+    #[getter]
+    fn heartbeat_confidence(&self) -> f64 { self.inner.heartbeat_confidence }
+
+    #[getter]
+    fn signal_quality(&self) -> f64 { self.inner.signal_quality }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "VitalSigns(breathing_rate_bpm={:?}, heart_rate_bpm={:?}, quality={:.3})",
+            self.inner.breathing_rate_bpm, self.inner.heart_rate_bpm, self.inner.signal_quality,
+        )
+    }
+}
+
+/// The detector the RuView sensing server runs: per-subcarrier breathing
+/// streams combined by PCA, FFT heart rate, spectra recomputed once per
+/// second. `VitalsEstimator(method="detector")` wraps it with the same
+/// output type as the classic method.
+#[pyclass(name = "VitalSignDetector")]
+pub struct PyVitalSignDetector {
+    inner: VitalSignDetector,
+}
+
+#[pymethods]
+impl PyVitalSignDetector {
+    #[new]
+    #[pyo3(signature = (sample_rate=20.0))]
+    fn new(sample_rate: f64) -> PyResult<Self> {
+        check_range("sample_rate", sample_rate, 1.0, 1000.0)?;
+        Ok(Self { inner: VitalSignDetector::new(sample_rate) })
+    }
+
+    /// Process one frame of amplitudes and phases (radians; same length, or
+    /// an empty list for no phase data). GIL released during DSP.
+    fn process_frame(
+        &mut self,
+        py: Python<'_>,
+        amplitudes: Vec<f64>,
+        phases: Vec<f64>,
+    ) -> PyResult<PyVitalSigns> {
+        if amplitudes.is_empty() || amplitudes.len() > MAX_SUBCARRIERS {
+            return Err(PyValueError::new_err(format!(
+                "amplitudes must have 1 to {MAX_SUBCARRIERS} values"
+            )));
+        }
+        if !phases.is_empty() && phases.len() != amplitudes.len() {
+            return Err(PyValueError::new_err("phases must be empty or match amplitudes"));
+        }
+        if amplitudes.iter().chain(&phases).any(|v| !v.is_finite()) {
+            return Err(PyValueError::new_err("frame contains a non-finite value"));
+        }
+        let phases = if phases.is_empty() { vec![0.0; amplitudes.len()] } else { phases };
+        let signs = py.detach(|| self.inner.process_frame(&amplitudes, &phases));
+        Ok(PyVitalSigns { inner: signs })
+    }
+
+    fn __repr__(&self) -> String {
+        "VitalSignDetector(PCA breathing, FFT heart rate)".to_string()
+    }
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVitalStatus>()?;
     m.add_class::<PyVitalEstimate>()?;
@@ -375,5 +617,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCsiVitalPreprocessor>()?;
     m.add_class::<PyBreathingExtractor>()?;
     m.add_class::<PyHeartRateExtractor>()?;
+    m.add_class::<PyVitalsEstimator>()?;
+    m.add_class::<PyVitalSignDetector>()?;
+    m.add_class::<PyVitalSigns>()?;
     Ok(())
 }

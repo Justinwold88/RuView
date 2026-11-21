@@ -148,6 +148,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slow sweep, pets and robot vacuums are not handled. Not yet MEASURED on
   hardware.
 
+- **Public BFI test, protocol version 3 result: not admitted, short by one
+  cell.** Run
+  [44897677546](https://github.com/Justinwold88/RuView/actions/runs/44897677546)
+  (MEASURED on public data, policy `csi-bfi-har-seqctl-counter-v1`).
+  - **Everything was admitted:** all 240 files and every candidate report.
+    No file had a More Fragments frame and no 16-bit value repeated.
+  - **Decoder oracle:** 1,872 reports matched, 960 of them admitted under
+    the policy.
+  - **Counter steps:** the 16-bit Sequence Control value stepped by exactly
+    1 in 63–99% of consecutive reports, depending on the group.
+  - **Coverage:** recordings with an eligible interval rose to 57 of 60
+    (train) and 41 of 60 (validation). 79 of 80 group/activity cells meet
+    coverage; train activity S has none.
+  - No detector was scored. Details in
+    `tools/bfi_learning/PUBLIC-BFI-MOTION-3.md`.
+
 - **Public BFI test, protocol version 3 (ADR-428).** Protocol 2 still could not admit the public benchmark: its
   sibling rule refused almost every nonzero-fragment frame, because the 16
   fragment-number values are equally common and no frame sets More

@@ -88,4 +88,48 @@ python tools/bfi_learning/public_bfi_motion.py --protocol public-bfi-motion-3 \
 
 ## Results
 
-Not yet run.
+**Run 1 (2026-11-21): benchmark NOT ADMITTED, short by one cell.** MEASURED
+on public data, under the policy `csi-bfi-har-seqctl-counter-v1`. Not
+comparable to versions 1 or 2.
+- Workflow run [44897677546](https://github.com/Justinwold88/RuView/actions/runs/44897677546), commit `8fbe0778`.
+- Dataset revision `c3013b3e…`, manifest SHA-256 `c2db11f7…`, Wireshark 4.2.2.
+
+**Every file and every candidate report was admitted.**
+- All 240 files passed integrity, the PCAPNG inventory and lossless
+  conversion.
+- No file had a More Fragments frame.
+- No candidate repeated a 16-bit Sequence Control value within 1 s.
+- **Decoder oracle:** 1,872 reports from all 240 files matched tshark 4.2.2
+  exactly; 960 of them were admitted under the policy.
+
+| Group | Admitted reports | Of which under the policy | Recordings with an eligible interval | Eligible intervals |
+|---|---|---|---|---|
+| train | 406,987 | 381,551 | 57 of 60 (version 2: 15) | 3,211 |
+| validation | 416,888 | 390,865 | 41 of 60 (version 2: 11) | 2,457 |
+| heldout_same_device | 1,060,132 | 993,844 | 60 of 60 | 3,599 |
+| heldout_other_device_view | 1,099,079 | 1,030,379 | 60 of 60 | 3,654 |
+
+**The field behaves like a counter.** This is the diagnostic, not a gate.
+Between consecutive candidates, the 16-bit value stepped by exactly 1 in
+62.9% of steps in train and 80.7% in validation, and in 99.2% and 99.4% in
+the two held-out groups. Most other steps were 2–16, which fits frames
+missing from the capture. Steps that were zero, backward or larger than 4096
+were 0.4% or less in every group.
+
+**Coverage falls short in exactly one cell.** Every activity needs 2
+recordings with an eligible interval in every group, and 79 of the 80
+group/activity cells have them.
+- **The short cell:** train activity S (all three participants, day 1,
+  kitchen) has no eligible interval in any recording.
+- **Validation:** participant P3's recordings have no eligible interval
+  for 19 of 20 activities. The other two participants still give every
+  validation activity at least 2 recordings.
+
+The benchmark is not admitted, so no detector was scored. The held-out
+groups were inspected for quality only.
+
+**What would change it.** Nothing inside version 3: its admission rule is
+frozen. One option would be a protocol version 4 that drops activity S,
+decided from this coverage table only (no score has been computed). It would
+be frozen before its run and labelled as such. That is the study owner's
+decision.

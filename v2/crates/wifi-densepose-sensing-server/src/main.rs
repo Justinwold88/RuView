@@ -4255,7 +4255,14 @@ fn generate_signal_field(
 /// The ring follows the vital-sign detector, the server's one breathing
 /// estimator (plan item 4.1). It used to come from a separate 9-frequency
 /// Goertzel estimate on the mean amplitude.
-fn signal_field_breathing_hz(vitals: &VitalSigns) -> f64 {
+///
+/// `--privacy-mode` never draws the ring. The ring appears only while the
+/// detector reports a breathing rate, so it would show that a rate was
+/// measured after the privacy filter (#2094) removed the rate itself.
+fn signal_field_breathing_hz(vitals: &VitalSigns, privacy_mode: bool) -> f64 {
+    if privacy_mode {
+        return 0.0;
+    }
     vitals
         .breathing_rate_bpm
         .filter(|bpm| bpm.is_finite() && *bpm > 0.0)
@@ -4549,23 +4556,47 @@ mod signal_field_breathing_tests {
     /// the server's only breathing estimator.
     #[test]
     fn ring_follows_the_vital_sign_detector() {
-        assert_eq!(signal_field_breathing_hz(&vitals(Some(15.0))), 0.25);
-        assert_eq!(signal_field_breathing_hz(&vitals(None)), 0.0);
-        assert_eq!(signal_field_breathing_hz(&vitals(Some(f64::NAN))), 0.0);
-        assert_eq!(signal_field_breathing_hz(&vitals(Some(-3.0))), 0.0);
+        assert_eq!(signal_field_breathing_hz(&vitals(Some(15.0)), false), 0.25);
+        assert_eq!(signal_field_breathing_hz(&vitals(None), false), 0.0);
+        assert_eq!(
+            signal_field_breathing_hz(&vitals(Some(f64::NAN)), false),
+            0.0
+        );
+        assert_eq!(signal_field_breathing_hz(&vitals(Some(-3.0)), false), 0.0);
 
         let variances = vec![0.0; 52];
         let without = generate_signal_field(-50.0, 0.05, 0.0, 0.5, &variances);
         let with = generate_signal_field(
             -50.0,
             0.05,
-            signal_field_breathing_hz(&vitals(Some(15.0))),
+            signal_field_breathing_hz(&vitals(Some(15.0)), false),
             0.5,
             &variances,
         );
         assert_ne!(
             with.values, without.values,
             "a breathing rate must draw the ring"
+        );
+    }
+
+    /// #2094: privacy mode removes breathing rates from every output, so the
+    /// field must not show that one was measured either.
+    #[test]
+    fn privacy_mode_never_draws_the_ring() {
+        assert_eq!(signal_field_breathing_hz(&vitals(Some(15.0)), true), 0.0);
+
+        let variances = vec![0.0; 52];
+        let empty = generate_signal_field(-50.0, 0.05, 0.0, 0.5, &variances);
+        let private = generate_signal_field(
+            -50.0,
+            0.05,
+            signal_field_breathing_hz(&vitals(Some(15.0)), true),
+            0.5,
+            &variances,
+        );
+        assert_eq!(
+            private.values, empty.values,
+            "privacy mode must produce the field of a room with no breathing rate"
         );
     }
 }
@@ -5898,7 +5929,7 @@ async fn wifi_task(state: SharedState, tick_ms: u64) {
             signal_field: generate_signal_field(
                 first_rssi,
                 motion_score,
-                signal_field_breathing_hz(&vitals),
+                signal_field_breathing_hz(&vitals, s.privacy_mode),
                 feat_variance.min(1.0),
                 &sub_variances,
             ),
@@ -6068,7 +6099,7 @@ async fn windows_wifi_fallback_tick(state: &SharedState, seq: u32) {
         signal_field: generate_signal_field(
             rssi_dbm,
             motion_score,
-            signal_field_breathing_hz(&vitals),
+            signal_field_breathing_hz(&vitals, s.privacy_mode),
             feat_variance.min(1.0),
             &sub_variances,
         ),
@@ -14447,7 +14478,7 @@ async fn udp_receiver_task(
                         signal_field: generate_signal_field(
                             fused_features.mean_rssi,
                             motion_score,
-                            signal_field_breathing_hz(&vitals),
+                            signal_field_breathing_hz(&vitals, s.privacy_mode),
                             fused_features.variance.min(1.0),
                             &sub_variances,
                         ),
@@ -14687,7 +14718,7 @@ async fn simulated_data_task(state: SharedState, tick_ms: u64) {
             signal_field: generate_signal_field(
                 features.mean_rssi,
                 motion_score,
-                signal_field_breathing_hz(&vitals),
+                signal_field_breathing_hz(&vitals, s.privacy_mode),
                 features.variance.min(1.0),
                 &sub_variances,
             ),

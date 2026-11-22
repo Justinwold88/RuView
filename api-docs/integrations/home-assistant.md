@@ -206,40 +206,6 @@ Always pair `--privacy-mode` with `--mqtt-tls` on non-localhost brokers.
 
 ---
 
-## Alexa (through Home Assistant)
-
-Until the Matter Bridge can be started, Alexa reaches RuView through Home Assistant. Alexa routines can start from a Home Assistant binary sensor only if it is shown to Alexa as a motion or contact sensor. Home Assistant does that for the `motion` and `presence` device classes, and RuView's `presence` entity uses `occupancy`. So add a motion-class sensor that follows RuView's presence.
-
-**1. Add the sensor.** In `configuration.yaml`:
-
-```yaml
-template:
-  - binary_sensor:
-      - name: "Living room presence for Alexa"
-        unique_id: ruview_living_room_presence_alexa
-        device_class: motion
-        # On while any node in the room reports presence. Use your own entity ids:
-        # Settings → Devices & services → Entities, search for "presence".
-        state: >
-          {{ is_state('binary_sensor.<node 1 presence entity>', 'on')
-             or is_state('binary_sensor.<node 2 presence entity>', 'on') }}
-```
-
-Restart Home Assistant, or reload template entities.
-
-**2. Show it to Alexa.**
-- **With Home Assistant Cloud:** expose the new sensor to Alexa in Home Assistant's voice-assistant settings, and leave state reporting on. Routines need Home Assistant to report changes to Alexa (proactive events).
-- **With your own Alexa skill** ([`alexa.smart_home`](https://www.home-assistant.io/integrations/alexa.smart_home/)): include the sensor in the `filter`, and turn on "Send Alexa Events" in the skill.
-
-**3. Use it in a routine.** In the Alexa app, discover devices. The sensor appears as a motion sensor. Create a routine: **When this happens → Smart Home →** the sensor **→ Detects motion** (or **No motion** for when the room empties).
-
-**What Alexa can and can't see.**
-- Alexa gets presence only. Person count, motion level and the semantic states have no matching Alexa sensor type. Use them in Home Assistant automations instead.
-- `--privacy-mode` doesn't change presence, so this works the same with it on.
-- Pets can raise presence. How often isn't measured yet (plan item 3.2, real-home protocol `pets_alone`). A routine meant for people may also run for a pet.
-
----
-
 ## Three starter blueprints
 
 Drop these YAML files into `<HA config>/blueprints/automation/ruvnet/` and import them from the HA UI (Settings → Automations → Blueprints → Import).

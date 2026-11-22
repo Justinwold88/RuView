@@ -334,8 +334,10 @@ class CounterPolicyTests(unittest.TestCase):
     def test_protocols_name_their_policies(self):
         self.assertEqual(motion.POLICIES, {"public-bfi-motion-1": None,
                                            "public-bfi-motion-2": motion.FRAGMENT_POLICY,
-                                           "public-bfi-motion-3": motion.COUNTER_POLICY})
+                                           "public-bfi-motion-3": motion.COUNTER_POLICY,
+                                           "public-bfi-motion-4": motion.COUNTER_POLICY})
         self.assertIn(motion.COUNTER_POLICY, " ".join(motion.limitations("public-bfi-motion-3")))
+        self.assertIn(motion.COUNTER_POLICY, " ".join(motion.limitations("public-bfi-motion-4")))
 
 
 class IntervalTests(unittest.TestCase):
@@ -426,6 +428,98 @@ class ScoringTests(unittest.TestCase):
         self.assertAlmostEqual(scores["bfi_motion"]["threshold"], 0.55)
         self.assertEqual(scores["bfi_motion"]["validation_intervals"]["balanced_accuracy"], 0.5)
         self.assertEqual(scores["coverage"]["validation"], {"eligible_intervals": 80, "recordings": 40})
+
+
+def covered_records(skip=()):
+    """Two recordings with an eligible interval for every group and activity, minus `skip` cells."""
+    records = []
+    for group in motion.GROUPS:
+        for activity in motion.ACTIVITIES:
+            for participant in ("P1", "P2"):
+                records.append({"group": group, "activity": activity, "participant": participant,
+                                "status": "ADMITTED", "path": f"{group}/{activity}_{participant}",
+                                "eligible_intervals": 0 if (group, activity) in skip else 1,
+                                "oracle": {"compared": 4, "status": "MATCH"}})
+    return records
+
+
+class Protocol4Tests(unittest.TestCase):
+    """ADR-429: protocol 4 is protocol 3 with activity S left out of admission and scoring."""
+
+    V3, V4 = "public-bfi-motion-3", "public-bfi-motion-4"
+
+    def test_only_protocol_4_leaves_out_activity_s(self):
+        self.assertEqual(motion.study_activities(self.V4), tuple("ABCDEFGHIJKLMNOPQRT"))
+        for protocol in motion.PROTOCOLS[:3]:
+            self.assertEqual(motion.study_activities(protocol), motion.ACTIVITIES)
+        self.assertNotIn("S", motion.MOVING)
+
+    def test_the_census_still_covers_s(self):
+        groups = motion.summarize(covered_records(skip={("train", "S")}), set(motion.GROUPS))
+        self.assertEqual(groups["train"]["recordings_with_eligible_interval_by_activity"]["S"], 0)
+        self.assertEqual(groups["train"]["files"], 40)
+
+    def test_the_train_s_shortfall_blocks_version_3_and_not_version_4(self):
+        records = covered_records(skip={("train", "S")})
+        groups = motion.summarize(records, set(motion.GROUPS))
+        v3 = motion.admission(groups, records, motion.study_activities(self.V3))
+        self.assertFalse(v3["admitted"])
+        self.assertEqual(v3["shortfalls"], [{"group": "train", "activity": "S", "recordings": 0}])
+        v4 = motion.admission(groups, records, motion.study_activities(self.V4))
+        self.assertTrue(v4["admitted"])
+        self.assertEqual(v4["shortfalls"], [])
+
+    def test_version_4_still_requires_every_other_activity(self):
+        records = covered_records(skip={("train", "S"), ("validation", "E")})
+        gate = motion.admission(motion.summarize(records, set(motion.GROUPS)), records,
+                                motion.study_activities(self.V4))
+        self.assertFalse(gate["admitted"])
+        self.assertEqual(gate["shortfalls"], [{"group": "validation", "activity": "E", "recordings": 0}])
+
+    def test_version_4_still_requires_the_oracle(self):
+        records = covered_records(skip={("train", "S")})
+        records[0]["oracle"] = {"compared": 0, "status": "FAILED", "reason": "oracle_angle_mismatch"}
+        gate = motion.admission(motion.summarize(records, set(motion.GROUPS)), records,
+                                motion.study_activities(self.V4))
+        self.assertEqual(gate["reasons"], ["decoder_oracle_failed"])
+
+    def test_s_intervals_are_not_fitted_or_scored(self):
+        records, features = [], []
+        for group in ("train", "validation"):
+            for activity in motion.ACTIVITIES:
+                for participant in ("P1", "P2"):
+                    records.append({"group": group, "activity": activity, "participant": participant,
+                                    "path": f"{group}/{activity}_{participant}"})
+                    # S looks like motion here; if it leaked into fitting, train BA would drop below 1.
+                    value = 1.0 if activity in motion.MOVING or activity == "S" else 0.1
+                    features.append([(value, 40)])
+        scores = motion.score(features, records, motion.study_activities(self.V4))
+        self.assertEqual(scores["bfi_motion"]["train_balanced_accuracy"], 1.0)
+        self.assertEqual(scores["bfi_motion"]["validation_intervals"]["balanced_accuracy"], 1.0)
+        self.assertEqual(scores["coverage"]["validation"], {"eligible_intervals": 38, "recordings": 38})
+        self.assertNotIn("S", scores["per_activity"]["train"])
+        self.assertEqual(scores["scored_codes"], "ABCDEFGHIJKLMNOPQRT")
+        leaked = motion.score(features, records)
+        self.assertLess(leaked["bfi_motion"]["train_balanced_accuracy"], 1.0)
+
+    def test_the_report_marks_s_and_says_why(self):
+        records = covered_records(skip={("train", "S")})
+        groups = motion.summarize(records, set(motion.GROUPS))
+        for row in groups.values():
+            row.update(packet_outcomes={}, rejected_files={})
+        report = {"protocol": self.V4, "evidence": "MEASURED", "dataset_revision": "rev",
+                  "manifest_sha256": "sha", "repository_commit": "commit", "workflow_run": "local run",
+                  "tools": {"wireshark": "TShark (Wireshark) 4.2.2."},
+                  "fragment_policy": motion.COUNTER_POLICY, "excluded_activities": ["S"],
+                  "census": {"groups": groups},
+                  "admission": motion.admission(groups, records, motion.study_activities(self.V4)),
+                  "scores": None, "limitations": motion.limitations(self.V4)}
+        text = motion.markdown(report)
+        self.assertIn("| R | S* | T |", text)
+        self.assertIn("Activities left out of admission and scoring: S", text)
+        self.assertIn("ADR-429", text)
+        self.assertIn("**ADMITTED**", text)
+        self.assertNotIn("ADR-429", " ".join(motion.limitations(self.V3)))
 
 
 @unittest.skipUnless(WIRESHARK, "Wireshark 4.2.2 tshark/editcap not installed")

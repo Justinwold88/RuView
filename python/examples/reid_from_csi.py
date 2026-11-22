@@ -18,8 +18,7 @@ from wifi_densepose.aether import AetherConfig, EmbeddingExtractor, cosine_simil
 def make_window(phase_shift: float, frames: int = 8, subc: int = 56) -> list[list[float]]:
     """A synthetic CSI window; `phase_shift` stands in for a different scene."""
     return [
-        [math.sin(0.1 * t + 0.03 * k + phase_shift) for k in range(subc)]
-        for t in range(frames)
+        [math.sin(0.1 * t + 0.03 * k + phase_shift) for k in range(subc)] for t in range(frames)
     ]
 
 
@@ -28,7 +27,7 @@ def main() -> None:
 
     same_a = ext.embed(make_window(0.0))
     same_b = ext.embed(make_window(0.0))  # same scene
-    other = ext.embed(make_window(1.5))   # different scene
+    other = ext.embed(make_window(1.5))  # different scene
 
     print(f"embedding dim:        {len(same_a)}")
     print(f"same-scene similarity:  {cosine_similarity(same_a, same_b):.4f}")

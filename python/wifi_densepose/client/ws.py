@@ -43,6 +43,7 @@ from typing import Any
 try:
     import websockets  # type: ignore[import-not-found]
     from websockets.exceptions import ConnectionClosed  # type: ignore[import-not-found]
+
     _WEBSOCKETS_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _WEBSOCKETS_AVAILABLE = False
@@ -86,6 +87,7 @@ class SensingMessage:
     """Base class for typed sensing-server messages. The original JSON
     payload is preserved in ``raw`` for forward-compatibility with
     fields not yet modelled here."""
+
     type: str
     raw: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
 
@@ -95,6 +97,7 @@ class ConnectionEstablishedMessage(SensingMessage):
     """First message after a successful WS handshake. Lets the client
     discover the node ID and capability flags without making a separate
     REST call."""
+
     node_id: str = ""
     version: str = ""
     capabilities: tuple[str, ...] = ()
@@ -105,6 +108,7 @@ class EdgeVitalsMessage(SensingMessage):
     """Vital-sign telemetry fused from the edge-vitals path
     (ADR-021/ADR-110). Optional fields may be ``None`` when the
     upstream channel hasn't produced a measurement yet."""
+
     node_id: str = ""
     presence: bool = False
     fall_detected: bool = False
@@ -122,6 +126,7 @@ class PoseDataMessage(SensingMessage):
     """17-keypoint pose data broadcast at the sensing-server's frame
     cadence. Persons are a list of opaque dicts — typed PoseEstimate
     decoding lives in the P2 bindings; the WS client passes through."""
+
     node_id: str = ""
     timestamp: float = 0.0
     persons: tuple[dict[str, Any], ...] = ()
@@ -160,11 +165,11 @@ def _decode(raw_text: str) -> SensingMessage:
             motion=float(obj.get("motion", 0.0)),
             breathing_rate_bpm=(
                 float(obj["breathing_rate_bpm"])
-                if obj.get("breathing_rate_bpm") is not None else None
+                if obj.get("breathing_rate_bpm") is not None
+                else None
             ),
             heartrate_bpm=(
-                float(obj["heartrate_bpm"])
-                if obj.get("heartrate_bpm") is not None else None
+                float(obj["heartrate_bpm"]) if obj.get("heartrate_bpm") is not None else None
             ),
             n_persons=int(obj.get("n_persons", 0)),
             motion_energy=float(obj.get("motion_energy", 0.0)),
@@ -221,7 +226,7 @@ class SensingClient:
         if not _WEBSOCKETS_AVAILABLE:
             raise ImportError(
                 "SensingClient requires the `websockets` package. Install with "
-                "`pip install \"wifi-densepose[client]\"` to enable the client extras."
+                '`pip install "wifi-densepose[client]"` to enable the client extras.'
             )
         self.url = url
         # Bearer token for auth-enabled sensing-servers. Explicit

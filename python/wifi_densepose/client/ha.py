@@ -50,9 +50,10 @@ _DISCOVERY_TOPIC_RE = re.compile(
 @dataclass(frozen=True)
 class HaDiscoveryPayload:
     """One MQTT discovery payload (config topic + JSON body)."""
+
     entity_kind: str  # "binary_sensor", "sensor", "event", "switch", ...
-    node_id: str      # the node's MAC-ish identifier
-    object_id: str    # entity slug (e.g. "presence", "heart_rate")
+    node_id: str  # the node's MAC-ish identifier
+    object_id: str  # entity slug (e.g. "presence", "heart_rate")
     payload: dict[str, Any]
 
     @property
@@ -66,6 +67,7 @@ class HaDiscoveryPayload:
 @dataclass(frozen=True)
 class HaEntity:
     """A user-facing view of one HA entity registered by a node."""
+
     entity_kind: str
     node_id: str
     object_id: str
@@ -178,11 +180,7 @@ class HABlueprintHelper:
         return list(self._payloads.values())
 
     def entities_for_node(self, node_id: str) -> list[HaEntity]:
-        return [
-            HaEntity.from_payload(p)
-            for p in self._payloads.values()
-            if p.node_id == node_id
-        ]
+        return [HaEntity.from_payload(p) for p in self._payloads.values() if p.node_id == node_id]
 
     def nodes(self) -> list[str]:
         return sorted({p.node_id for p in self._payloads.values()})

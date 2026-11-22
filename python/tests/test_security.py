@@ -67,13 +67,15 @@ def test_ws_decoder_handles_huge_string_values() -> None:
     """A 1 MB string in a JSON field must decode without exploding.
     The websockets `max_size` parameter (default 16 MB) is the actual
     DoS guard — this just confirms the decoder itself is linear."""
-    huge_payload = json.dumps({
-        "type": "edge_vitals",
-        "node_id": "x" * (1024 * 1024),  # 1 MB string
-        "presence": True,
-        "fall_detected": False,
-        "motion": 0.0,
-    })
+    huge_payload = json.dumps(
+        {
+            "type": "edge_vitals",
+            "node_id": "x" * (1024 * 1024),  # 1 MB string
+            "presence": True,
+            "fall_detected": False,
+            "motion": 0.0,
+        }
+    )
     msg = _decode(huge_payload)
     assert msg.type == "edge_vitals"
 
@@ -97,28 +99,31 @@ def test_ws_decoder_handles_unicode_in_node_id() -> None:
 # ─── MQTT topic matcher — exhaustive edge cases ─────────────────────
 
 
-@pytest.mark.parametrize("pattern,topic,expected", [
-    # Empty / boundary
-    ("", "", True),
-    ("a", "", False),
-    ("", "a", False),
-    # `+` cannot bypass a literal level boundary
-    ("a/+/c", "a/b/c", True),
-    ("a/+/c", "a/b/d", False),
-    ("a/+/c", "a/b/c/d", False),
-    # `#` is greedy from its position but does not match if it's
-    # mid-pattern (per MQTT spec; our matcher returns False then).
-    ("a/#/c", "a/b/c", False),  # `#` must be terminal
-    # Topics starting with `$` are legal here — we don't filter them;
-    # matching is purely syntactic. `+` is one-level only, so `$SYS/+`
-    # matches `$SYS/broker` but NOT `$SYS/broker/version`.
-    ("$SYS/+", "$SYS/broker", True),
-    ("$SYS/+", "$SYS/broker/version", False),
-    ("$SYS/#", "$SYS/broker/version", True),
-    # Null byte in topic: still string comparison, but useful to lock
-    # down behaviour.
-    ("a/b", "a\x00/b", False),
-])
+@pytest.mark.parametrize(
+    "pattern,topic,expected",
+    [
+        # Empty / boundary
+        ("", "", True),
+        ("a", "", False),
+        ("", "a", False),
+        # `+` cannot bypass a literal level boundary
+        ("a/+/c", "a/b/c", True),
+        ("a/+/c", "a/b/d", False),
+        ("a/+/c", "a/b/c/d", False),
+        # `#` is greedy from its position but does not match if it's
+        # mid-pattern (per MQTT spec; our matcher returns False then).
+        ("a/#/c", "a/b/c", False),  # `#` must be terminal
+        # Topics starting with `$` are legal here — we don't filter them;
+        # matching is purely syntactic. `+` is one-level only, so `$SYS/+`
+        # matches `$SYS/broker` but NOT `$SYS/broker/version`.
+        ("$SYS/+", "$SYS/broker", True),
+        ("$SYS/+", "$SYS/broker/version", False),
+        ("$SYS/#", "$SYS/broker/version", True),
+        # Null byte in topic: still string comparison, but useful to lock
+        # down behaviour.
+        ("a/b", "a\x00/b", False),
+    ],
+)
 def test_topic_matcher_edge_cases(pattern: str, topic: str, expected: bool) -> None:
     assert _topic_matches(pattern, topic) is expected
 
@@ -195,15 +200,21 @@ def test_ha_helper_handles_non_dict_payload() -> None:
 def test_primitive_listener_ignores_topic_injection_attempts() -> None:
     listener = SemanticPrimitiveListener()
     # Extra leading segments
-    assert listener.handle_mqtt_message(
-        "evil/homeassistant/binary_sensor/wifi_densepose_aa/someone_sleeping/state",
-        "ON",
-    ) is None
+    assert (
+        listener.handle_mqtt_message(
+            "evil/homeassistant/binary_sensor/wifi_densepose_aa/someone_sleeping/state",
+            "ON",
+        )
+        is None
+    )
     # Wrong final segment
-    assert listener.handle_mqtt_message(
-        "homeassistant/binary_sensor/wifi_densepose_aa/someone_sleeping/STATE",
-        "ON",
-    ) is None
+    assert (
+        listener.handle_mqtt_message(
+            "homeassistant/binary_sensor/wifi_densepose_aa/someone_sleeping/STATE",
+            "ON",
+        )
+        is None
+    )
     # Empty node_id after the wifi_densepose_ prefix is still routed
     # (the node_id is "") because we don't enforce a minimum length —
     # but that's not an injection vector. Confirm behaviour.
@@ -234,12 +245,14 @@ def test_public_surface_is_stable() -> None:
     """Every name in `wifi_densepose.__all__` must be resolvable.
     Catches accidental re-export breakage between phases."""
     import wifi_densepose
+
     for name in wifi_densepose.__all__:
         assert hasattr(wifi_densepose, name), f"__all__ promises {name!r} but attribute missing"
 
 
 def test_client_public_surface_is_stable() -> None:
     import wifi_densepose.client as c
+
     for name in c.__all__:
         # Lazy re-exports for SensingClient + RuViewMqttClient need to
         # be resolvable too — touch them to exercise __getattr__.

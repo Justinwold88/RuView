@@ -22,9 +22,9 @@ def test_version_string_well_formed() -> None:
 
     assert isinstance(wifi_densepose.__version__, str)
     # Allow pre-release segments (a, b, rc, dev) for non-final wheels.
-    assert re.match(
-        r"^\d+\.\d+\.\d+(a|b|rc|\.dev)?\d*$", wifi_densepose.__version__
-    ), f"non-PEP-440 version: {wifi_densepose.__version__}"
+    assert re.match(r"^\d+\.\d+\.\d+(a|b|rc|\.dev)?\d*$", wifi_densepose.__version__), (
+        f"non-PEP-440 version: {wifi_densepose.__version__}"
+    )
 
 
 def test_rust_version_surfaced() -> None:

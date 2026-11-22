@@ -35,6 +35,7 @@ from typing import Any
 
 class SemanticPrimitive(enum.Enum):
     """One of the 10 HA-MIND fused inference outputs."""
+
     SomeoneSleeping = "someone_sleeping"
     PossibleDistress = "possible_distress"
     RoomActive = "room_active"
@@ -66,6 +67,7 @@ class SemanticPrimitiveEvent:
     - sensor: numeric string (e.g. "73" for fall_risk_elevated 0–100)
     - event: "fired" or an event-class string like "bed_exit_detected"
     """
+
     kind: SemanticPrimitive
     node_id: str
     state: str
@@ -145,7 +147,7 @@ class SemanticPrimitiveListener:
         if primitive is None:  # pragma: no cover — guarded above
             return None
 
-        node_id = node_prefix[len("wifi_densepose_"):]
+        node_id = node_prefix[len("wifi_densepose_") :]
         event = _decode_event(primitive, node_id, payload)
 
         # Dispatch — primitive-specific first, then "any" handlers.
@@ -175,9 +177,7 @@ def _decode_event(
         try:
             payload = payload.decode("utf-8")
         except UnicodeDecodeError:
-            return SemanticPrimitiveEvent(
-                kind=primitive, node_id=node_id, state="", raw={}
-            )
+            return SemanticPrimitiveEvent(kind=primitive, node_id=node_id, state="", raw={})
 
     if isinstance(payload, dict):
         body = payload
@@ -202,9 +202,7 @@ def _decode_event(
                 raw={"state": decoded},
             )
     else:
-        return SemanticPrimitiveEvent(
-            kind=primitive, node_id=node_id, state=str(payload), raw={}
-        )
+        return SemanticPrimitiveEvent(kind=primitive, node_id=node_id, state=str(payload), raw={})
 
     expl = body.get("explanation") or body.get("reason") or ()
     if isinstance(expl, str):

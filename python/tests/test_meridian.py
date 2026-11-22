@@ -27,6 +27,7 @@ def fixture() -> dict:
 
 # ─── HardwareType / HardwareNormalizer / CanonicalCsiFrame ───────────
 
+
 def test_hardware_type_detect() -> None:
     assert mer.HardwareType.detect(64) == mer.HardwareType.Esp32S3
     assert mer.HardwareType.detect(30) == mer.HardwareType.Intel5300
@@ -58,6 +59,7 @@ def test_normalize_rejects_mismatched_lengths() -> None:
 
 # ─── GeometryEncoder ─────────────────────────────────────────────────
 
+
 def test_geometry_encode_dim_and_permutation_invariance() -> None:
     enc = mer.GeometryEncoder(mer.MeridianGeometryConfig())
     aps = [[0.25, 0.5, 0.75], [1.0, 1.25, 1.5], [2.0, 0.0, -0.5]]
@@ -78,11 +80,16 @@ def test_geometry_encode_rejects_empty_and_bad_shape() -> None:
 
 # ─── RapidAdaptation ─────────────────────────────────────────────────
 
+
 def test_rapid_adaptation_adapt() -> None:
     fx = fixture()
     ra = mer.RapidAdaptation(
-        min_calibration_frames=10, lora_rank=4, loss_kind="combined",
-        epochs=5, lr=0.001, lambda_ent=0.5,
+        min_calibration_frames=10,
+        lora_rank=4,
+        loss_kind="combined",
+        epochs=5,
+        lr=0.001,
+        lambda_ent=0.5,
     )
     for frame in fx["rapid_frames"]:
         ra.push_frame(frame)
@@ -107,6 +114,7 @@ def test_rapid_adaptation_empty_buffer_raises() -> None:
 
 # ─── CrossDomainEvaluator ────────────────────────────────────────────
 
+
 def test_cross_domain_evaluator_gap_ratio() -> None:
     ev = mer.CrossDomainEvaluator(1)
     preds = [
@@ -125,6 +133,7 @@ def test_mpjpe_module_fn() -> None:
 
 # ─── §4.1 bit-for-bit parity gate (release-blocking) ─────────────────
 
+
 def test_bit_for_bit_parity_with_native_rust() -> None:
     fx = fixture()
     out: list[float] = []
@@ -139,8 +148,12 @@ def test_bit_for_bit_parity_with_native_rust() -> None:
     out += list(enc.encode(fx["ap_positions"]))
 
     ra = mer.RapidAdaptation(
-        min_calibration_frames=10, lora_rank=4, loss_kind="combined",
-        epochs=5, lr=0.001, lambda_ent=0.5,
+        min_calibration_frames=10,
+        lora_rank=4,
+        loss_kind="combined",
+        epochs=5,
+        lr=0.001,
+        lambda_ent=0.5,
     )
     for frame in fx["rapid_frames"]:
         ra.push_frame(frame)
@@ -150,8 +163,7 @@ def test_bit_for_bit_parity_with_native_rust() -> None:
     got = hashlib.sha256(packed).hexdigest()
     expected = (GOLDEN / "meridian_output.sha256").read_text().strip()
     assert got == expected, (
-        f"Python binding MERIDIAN output diverged from native-Rust golden "
-        f"({got} != {expected})"
+        f"Python binding MERIDIAN output diverged from native-Rust golden ({got} != {expected})"
     )
 
 

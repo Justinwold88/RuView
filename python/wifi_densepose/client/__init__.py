@@ -85,8 +85,10 @@ def __getattr__(name: str):
         "ConnectionEstablishedMessage",
     }:
         from wifi_densepose.client import ws as _ws
+
         return getattr(_ws, name)
     if name == "RuViewMqttClient":
         from wifi_densepose.client.mqtt import RuViewMqttClient as _R
+
         return _R
     raise AttributeError(f"module 'wifi_densepose.client' has no attribute {name!r}")

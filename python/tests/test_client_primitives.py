@@ -160,27 +160,36 @@ def test_listener_decodes_bytes_payload() -> None:
 
 def test_listener_ignores_non_state_topics() -> None:
     listener = SemanticPrimitiveListener()
-    assert listener.handle_mqtt_message(
-        "homeassistant/binary_sensor/wifi_densepose_aabb/room_active/config",
-        json.dumps({"name": "Room Active"}),
-    ) is None
+    assert (
+        listener.handle_mqtt_message(
+            "homeassistant/binary_sensor/wifi_densepose_aabb/room_active/config",
+            json.dumps({"name": "Room Active"}),
+        )
+        is None
+    )
 
 
 def test_listener_ignores_unknown_slug() -> None:
     listener = SemanticPrimitiveListener()
-    assert listener.handle_mqtt_message(
-        "homeassistant/binary_sensor/wifi_densepose_aabb/unknown_primitive/state",
-        "ON",
-    ) is None
+    assert (
+        listener.handle_mqtt_message(
+            "homeassistant/binary_sensor/wifi_densepose_aabb/unknown_primitive/state",
+            "ON",
+        )
+        is None
+    )
 
 
 def test_listener_ignores_non_wifi_densepose_node() -> None:
     listener = SemanticPrimitiveListener()
     # third segment doesn't start with wifi_densepose_
-    assert listener.handle_mqtt_message(
-        "homeassistant/binary_sensor/aqara_fp2/room_active/state",
-        "ON",
-    ) is None
+    assert (
+        listener.handle_mqtt_message(
+            "homeassistant/binary_sensor/aqara_fp2/room_active/state",
+            "ON",
+        )
+        is None
+    )
 
 
 def test_listener_explanation_string_is_normalised_to_tuple() -> None:
@@ -203,5 +212,6 @@ def test_event_is_frozen() -> None:
         state="ON",
     )
     import pytest
+
     with pytest.raises((AttributeError, Exception)):  # FrozenInstanceError subclass
         evt.state = "OFF"  # type: ignore[misc]

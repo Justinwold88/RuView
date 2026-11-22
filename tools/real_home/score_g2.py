@@ -242,6 +242,7 @@ def score(records, scoring, split, mmwave=None):
 
     empty = events("home_empty")
     room_empty = events("room_empty")
+    pets_alone = events("pets_alone")
     still = held("still_in_area")
     walks = {"detected": [], "already_present": 0, "missed": 0, "no_output": 0}
     for walk in walk_ins:
@@ -290,6 +291,7 @@ def score(records, scoring, split, mmwave=None):
                 "walk_in_latency": counted > 0 and within == counted}
         gate["passed"] = all(gate.values())
     return {"split": split, "empty_home": empty, "room_empty_home_occupied": room_empty,
+            "pets_alone": pets_alone,
             "still_in_area": still, "still_outside_area": held("still_outside"), "sleep": held("sleep"),
             "walk_ins": walk_summary, "pet_only": {"episodes": len(pet), "raised_occupied": pet_raised},
             "breathing_vs_mmwave": breathing, "minimum_test_data": {"met": not missing, "missing": missing},
@@ -321,7 +323,9 @@ def markdown(report):
              f"- Still outside the sensing area: held {fmt(r['still_outside_area']['held_share'], pct=True)}",
              f"- Asleep: held {fmt(r['sleep']['held_share'], pct=True)}",
              f"- Pet-only episodes that raised occupied: {r['pet_only']['raised_occupied']} of "
-             f"{r['pet_only']['episodes']}"]
+             f"{r['pet_only']['episodes']}",
+             f"- Nobody home, pets loose: {fmt(r['pets_alone']['events_per_hour'])} false occupied events per "
+             f"hour ({r['pets_alone']['events']} in {fmt(r['pets_alone']['scored_hours'], 1)} h)"]
     if r["breathing_vs_mmwave"]:
         b = r["breathing_vs_mmwave"]
         lines.append(f"- Breathing vs mmWave reference: median error {fmt(b['median_abs_error_bpm'])} BPM over "

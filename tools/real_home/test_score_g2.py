@@ -114,6 +114,19 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(result["breathing_vs_mmwave"]["median_abs_error_bpm"], 0.5)
         self.assertEqual(result["room_empty_home_occupied"]["events"], 0)
 
+    def test_pets_alone_is_reported_apart_from_g2(self):
+        # 2 h with nobody home and pets loose; the room reads present twice.
+        spans = [(0, 1000, False), (1000, 1100, True), (1100, 4000, False), (4000, 4050, True),
+                 (4050, 7200, False)]
+        result = g2.score(verdicts(spans, step=1.0), self.scoring([interval("pets_alone", 0, 7200)]), "test")
+        self.assertEqual(result["pets_alone"]["events"], 2)
+        self.assertAlmostEqual(result["pets_alone"]["events_per_hour"], 1.0)
+        self.assertEqual(result["empty_home"]["events"], 0)
+        self.assertEqual(result["empty_home"]["scored_hours"], 0.0)
+        self.assertIn("empty_home_hours", result["minimum_test_data"]["missing"])
+        text = g2.markdown({"results": result, "freeze_commit": "c", "scored_utc": "t"})
+        self.assertIn("Nobody home, pets loose: 1.00 false occupied events per hour (2 in 2.0 h)", text)
+
 
 def fused(node, bpm, present=True):
     data = bytearray(48)

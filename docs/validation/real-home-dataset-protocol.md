@@ -27,6 +27,8 @@ Reported alongside, but not part of G2:
 - still minutes held at spots outside the sensing area
 - presence held while asleep
 - the share of `pet_only` episodes that raise occupied (input for 3.2)
+- false occupied events per hour while nobody is home and pets are loose
+  (`pets_alone`, input for 3.2)
 - Phase 1 metrics on real data (item 2.4):
   - breathing rate against the mmWave reference, where the mmWave module reports one
   - frames per second
@@ -113,6 +115,8 @@ They describe the home, so they stay private with the data.
 
 - study room, its size, the doorway(s) used for walk-ins, and how many people
   and pets live in the home
+- where the pets are shut in during `home_empty`, and confirmation that this
+  room has no node and is outside every link's sensing area
 - each node's board, firmware version and app SHA-256, position and height,
   plus the access point position, channel and bandwidth
 - the mmWave module type and position, if one is fitted
@@ -167,7 +171,8 @@ and are copied into the CSV with `--at`.
 
 | Event | Meaning |
 |---|---|
-| `home_empty_start` / `home_empty_end` | Nobody is in the home and no pets are loose. Log the time the last person leaves, then the time the first person returns. |
+| `home_empty_start` / `home_empty_end` | Nobody is in the home and no pets are loose: every pet is out of the home or shut in a closed room that has no node and is outside every link's sensing area. Log the time the last person leaves, then the time the first person returns. |
+| `pets_alone_start` / `pets_alone_end` | Nobody is in the home and pets are loose. Logged like `home_empty`. Never counted as `home_empty`. |
 | `room_empty_start` / `room_empty_end` | Nobody is in the study room, but people are elsewhere in the home |
 | `still_start` / `still_end` | One person sits or lies awake at a marked spot and barely moves: reading, a laptop, TV. They start once seated. Use `--spot S1`, or `--spot S4-out` for a spot outside the sensing area. |
 | `sleep_start` / `sleep_end` | A person in the room is asleep (lights out until getting up) |
@@ -188,6 +193,21 @@ includes:
 - **every absence from home**, logged as `home_empty`
 
 The pet episodes and sleep are labelled as they happen.
+
+**Homes with pets.** Wi-Fi sensing and the mmWave module both respond to
+animals, so what was in the room decides how time counts:
+
+- G2's empty-home metric needs people and pets absent. In a home with pets,
+  `home_empty` time therefore needs the pets shut in, as defined in the label
+  table. If the test days don't reach 24 guarded `home_empty` hours, G2 is
+  reported as "insufficient data". It is never filled with `pets_alone` time.
+- `pets_alone` time is reported separately, as false occupied events per hour.
+  It shows how often pets alone make the room read as occupied, which is the
+  question for plan item 3.2.
+- `pet_only` episodes are labelled only when someone sees them, for example
+  from the doorway. Unlabelled pet time is never used.
+- Pets stay out of the room during fall sessions (see the
+  [fall study](fall-study-protocol.md)).
 
 **Reference checks, reported and not fixed silently:**
 

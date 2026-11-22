@@ -129,7 +129,9 @@ change affects shared contracts, release paths, or security boundaries.
 **Formatting:** format the files you change (`rustfmt`, Ruff for `python/`,
 ESLint in `ui/`). Many existing files predate these tools, so don't reformat
 files you aren't otherwise changing. A pure formatting change belongs in its own
-PR.
+PR. Crates listed in `v2/rustfmt-gated-crates.txt` must stay fully
+rustfmt-clean, and CI checks them (`scripts/check_rustfmt.sh`). To add a
+crate, format it in its own PR and add it to the list.
 
 ### 4. Update docs and the changelog
 

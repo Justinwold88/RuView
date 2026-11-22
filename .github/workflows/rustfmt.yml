@@ -1,0 +1,53 @@
+name: Rust format
+
+# Keeps the crates in v2/rustfmt-gated-crates.txt rustfmt-clean. Most of the
+# workspace predates rustfmt, so the gate grows one formatted crate at a time
+# instead of reformatting everything at once. Logic: scripts/check_rustfmt.sh.
+
+on:
+  pull_request:
+    paths:
+      - 'v2/**/*.rs'
+      - 'v2/**/Cargo.toml'
+      - 'v2/rustfmt-gated-crates.txt'
+      - 'v2/rust-toolchain.toml'
+      - 'scripts/check_rustfmt.sh'
+      - '.github/workflows/rustfmt.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'v2/**/*.rs'
+      - 'v2/**/Cargo.toml'
+      - 'v2/rustfmt-gated-crates.txt'
+      - 'v2/rust-toolchain.toml'
+      - 'scripts/check_rustfmt.sh'
+      - '.github/workflows/rustfmt.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rustfmt-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rustfmt:
+    name: rustfmt (gated crates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          # cargo metadata needs every workspace member, including submodule path dependencies.
+          submodules: recursive
+      - name: Install Rust 1.89 with rustfmt
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.89.0
+          components: rustfmt
+      - name: Check the gated crates (and list clean ones not gated yet)
+        env:
+          RUSTUP_TOOLCHAIN: 1.89.0
+        run: bash scripts/check_rustfmt.sh --report

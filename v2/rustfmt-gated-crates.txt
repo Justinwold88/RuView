@@ -1,0 +1,20 @@
+# Crates that must stay rustfmt-clean. CI runs `cargo fmt --check` on them
+# (.github/workflows/rustfmt.yml, scripts/check_rustfmt.sh).
+#
+# A crate joins when it is fully formatted: format it in a pull request of its
+# own (`cargo fmt -p <crate>`), then add it here. Vendored dependency patches
+# under vendor/security are byte-for-byte upstream and stay off this list.
+homecore-server
+nvsim-server
+ruview-cognitum-spaces
+ruview-fann-head
+ruview-kernel
+ruview-offaxis
+ruview-policy
+ruview-spatial-memory
+ruview-survey
+wifi-densepose-desktop
+wifi-densepose-mtk-bridge
+wifi-densepose-physics
+wifi-densepose-privshield
+wifi-densepose-wasm

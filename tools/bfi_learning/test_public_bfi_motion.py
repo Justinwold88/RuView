@@ -1,5 +1,6 @@
 """SYNTHETIC tests for the public BFI motion test. No network, no public data."""
 import math
+import os
 import shutil
 import struct
 import tempfile
@@ -26,6 +27,9 @@ def wireshark_ok():
 
 
 WIRESHARK = wireshark_ok()
+# CI jobs that install Wireshark set this, so the oracle tests can't be skipped silently.
+if os.environ.get("RUVIEW_REQUIRE_WIRESHARK") == "1" and not WIRESHARK:
+    raise RuntimeError("RUVIEW_REQUIRE_WIRESHARK=1, but tshark and editcap 4.2.2 are not both available")
 
 
 def rows_for(seed):

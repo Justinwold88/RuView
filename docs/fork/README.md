@@ -61,13 +61,18 @@ same day adds `-2`, `-3` and so on. These names never start with `v`, so they
 can't collide with upstream's `v*`, `v*-esp32` or `v*-pip` tags. They also
 don't start the tag-triggered workflows those tags start.
 
-To cut a release from the current `main`:
+To cut a release from the current `main`, either:
 
-```bash
-git fetch origin main
-git tag fork-2026.11.21 origin/main
-git push origin fork-2026.11.21
-```
+- **From GitHub:** Actions → **Fork release** → **Run workflow**. Leave the
+  tag empty for today's date, or enter `fork-YYYY.MM.DD-2` for a second
+  release on the same day. The workflow tags the current `main` itself.
+- **From a clone:**
+
+  ```bash
+  git fetch origin main
+  git tag fork-2026.11.21 origin/main
+  git push origin fork-2026.11.21
+  ```
 
 `.github/workflows/fork-release.yml` then runs `scripts/fork_release.sh`, which:
 
@@ -78,7 +83,8 @@ git push origin fork-2026.11.21
   first
 - appends GitHub's generated list of pull requests merged since the previous
   fork tag. The first release starts at `fork-base`, the upstream commit the
-  fork started from.
+  fork started from (`13b47883`). The script creates that tag if it is
+  missing.
 - attaches the firmware bundles from the newest successful Firmware CI run on
   `main`, with `SHA256SUMS.txt`. It does this only when `firmware/` and
   `firmware-ci.yml` are unchanged between that run's commit and the tag.

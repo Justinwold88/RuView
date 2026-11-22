@@ -1,22 +1,33 @@
 name: Fork release
 
-# Publishes a release when a fork-YYYY.MM.DD tag is pushed: generated notes for
-# the pull requests merged since the previous fork tag, plus the firmware
-# bundles of the newest matching Firmware CI run. Logic and local dry run:
-# scripts/fork_release.sh <tag> --dry-run. Guide: docs/fork/README.md.
+# Publishes a release for a fork-YYYY.MM.DD tag: generated notes for the pull
+# requests merged since the previous fork tag, changelog fragments, and the
+# firmware bundles of the newest matching Firmware CI run. Logic and local dry
+# run: scripts/fork_release.sh <tag> --dry-run. Guide: docs/fork/README.md.
+#
+# Two ways to start it:
+#   - push a fork-YYYY.MM.DD tag that points at main
+#   - Actions > Fork release > Run workflow: tags the current main and releases
+#     it (leave the tag empty for today's date)
 
 on:
   push:
     tags:
       # fork-YYYY.MM.DD[-N]; fork-base (the fork point) is not a release.
       - "fork-[0-9][0-9][0-9][0-9].*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create on the current main, fork-YYYY.MM.DD or fork-YYYY.MM.DD-N (empty: today's date)"
+        required: false
+        type: string
 
 permissions:
-  contents: write # create the release
+  contents: write # create tags and the release
   actions: read # find and download Firmware CI artifacts
 
 concurrency:
-  group: fork-release-${{ github.ref_name }}
+  group: fork-release
   cancel-in-progress: false
 
 jobs:
@@ -27,13 +38,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # Credentials stay configured: a manual run pushes its tag, and the
+      # first release pushes the fork-base tag.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-          persist-credentials: false
+
+      - name: Tag the current main (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-fork-$(date -u +%Y.%m.%d)}"
+          if [[ ! "$tag" =~ ^fork-[0-9]{4}\.[0-9]{2}\.[0-9]{2}(-[0-9]+)?$ ]]; then
+            echo "::error::not a fork release tag: $tag"
+            exit 2
+          fi
+          git fetch --quiet --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::$tag already exists. For a second release today, use $tag-2."
+            exit 1
+          fi
+          git tag "$tag" refs/remotes/origin/main
+          git push --quiet origin "refs/tags/$tag"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: bash scripts/fork_release.sh "$TAG"
+        run: bash scripts/fork_release.sh "${RELEASE_TAG:-$GITHUB_REF_NAME}"

@@ -70,6 +70,19 @@ jobs:
             size_limit_kb: 1200
             artifact_app: esp32-csi-node.bin
             artifact_pt: partition-table.bin
+          # Display-less 8 MB boards (ESP32-S3-DevKitC-1 and similar). The display
+          # build's panel probe false-positives on them and collapses CSI to 0 pps
+          # (see sdkconfig.defaults.devkitc), so they need display support compiled out.
+          - variant: 8mb-devkitc
+            idf_image: espressif/idf:v5.4
+            target: esp32s3
+            sdkconfig: sdkconfig.defaults
+            sdkconfig_defaults: "sdkconfig.defaults;sdkconfig.defaults.devkitc"
+            partition_table_name: partitions_display.csv
+            size_warn_kb: 1100
+            size_limit_kb: 1200
+            artifact_app: esp32-csi-node-devkitc.bin
+            artifact_pt: partition-table-devkitc.bin
           - variant: 4mb
             idf_image: espressif/idf:v5.4
             target: esp32s3
@@ -115,8 +128,19 @@ jobs:
           if [ "${{ matrix.variant }}" = "4mb" ]; then
             cp "${{ matrix.sdkconfig }}" sdkconfig.defaults
           fi
-          idf.py set-target ${{ matrix.target }}
-          idf.py build
+          # 8mb-devkitc layers its overlay explicitly, on both commands, as the
+          # overlay's header documents.
+          if [ -n "${{ matrix.sdkconfig_defaults }}" ]; then
+            idf.py -D SDKCONFIG_DEFAULTS="${{ matrix.sdkconfig_defaults }}" set-target ${{ matrix.target }}
+            idf.py -D SDKCONFIG_DEFAULTS="${{ matrix.sdkconfig_defaults }}" build
+            if grep -q '^CONFIG_DISPLAY_ENABLE=y' sdkconfig; then
+              echo "::error::the display-less variant was built with display support"
+              exit 1
+            fi
+          else
+            idf.py set-target ${{ matrix.target }}
+            idf.py build
+          fi
 
       - name: Build and run host-side firmware unit tests
         if: matrix.variant == 'c6-4mb'
@@ -263,7 +287,7 @@ jobs:
           prerelease: true
           make_latest: false
           body: |
-            Exact-run ESP32-S3 display 8 MB, ESP32-S3 headless 4 MB, ESP32-C6 4 MB, and ESP32-C5 4 MB firmware bundles.
+            Exact-run ESP32-S3 display 8 MB, ESP32-S3 display-less 8 MB (DevKitC-1 and similar), ESP32-S3 headless 4 MB, ESP32-C6 4 MB, and ESP32-C5 4 MB firmware bundles.
             Verify each archive against `SHA256SUMS.txt` before flashing.
             CI builds and host tests verify software behavior, not target hardware.
             This prerelease has no new physical-board qualification or sensing-accuracy claim.

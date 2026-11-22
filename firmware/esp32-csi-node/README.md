@@ -205,6 +205,7 @@ Choose the package that names both your chip and flash size:
 | Package | Use it for |
 |---------|------------|
 | `esp32-csi-node-firmware-8mb.tar.gz` | ESP32-S3 display configuration, 8 MB flash |
+| `esp32-csi-node-firmware-8mb-devkitc.tar.gz` | ESP32-S3 display-less boards (DevKitC-1 and similar), 8 MB flash. Only in releases built after this bundle was added to `firmware-ci.yml` |
 | `esp32-csi-node-firmware-4mb.tar.gz` | ESP32-S3 headless configuration, 4 MB layout |
 | `esp32-csi-node-firmware-c6-4mb.tar.gz` | ESP32-C6 research target, 4 MB layout |
 
@@ -217,8 +218,11 @@ onto a C6, or a C6 bundle onto an S3.
 The 4 MB application/partition filenames are `esp32-csi-node-4mb.bin` and
 `partition-table-4mb.bin`; C6 uses `esp32-csi-node-c6.bin` and
 `partition-table-c6.bin`. Do not mix files from different archives.
-Bare 8 MB DevKitC boards need a source build with `sdkconfig.defaults.devkitc`
-as documented below; the 8 MB release bundle enables display support.
+Bare 8 MB DevKitC boards need display support compiled out: use the
+`8mb-devkitc` bundle, whose files are `esp32-csi-node-devkitc.bin` and
+`partition-table-devkitc.bin`, or a source build with
+`sdkconfig.defaults.devkitc` as documented below. The plain 8 MB bundle
+enables display support, and on a board without a panel that stops CSI.
 The tracked `release_bins/` files are historical snapshots and must not be
 used as current firmware downloads (see issues #1899 and #2092).
 

@@ -1,0 +1,39 @@
+name: Fork release
+
+# Publishes a release when a fork-YYYY.MM.DD tag is pushed: generated notes for
+# the pull requests merged since the previous fork tag, plus the firmware
+# bundles of the newest matching Firmware CI run. Logic and local dry run:
+# scripts/fork_release.sh <tag> --dry-run. Guide: docs/fork/README.md.
+
+on:
+  push:
+    tags:
+      # fork-YYYY.MM.DD[-N]; fork-base (the fork point) is not a release.
+      - "fork-[0-9][0-9][0-9][0-9].*"
+
+permissions:
+  contents: write # create the release
+  actions: read # find and download Firmware CI artifacts
+
+concurrency:
+  group: fork-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish fork release
+    # Only forks publish fork releases.
+    if: github.repository != 'ruvnet/RuView'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: bash scripts/fork_release.sh "$TAG"

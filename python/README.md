@@ -88,8 +88,8 @@ import math
 from wifi_densepose import BreathingExtractor, CsiVitalPreprocessor, HeartRateExtractor
 
 pre = CsiVitalPreprocessor.esp32_default()  # 56 subcarriers, EMA static suppression
-br = BreathingExtractor.esp32_default()     # 0.1-0.5 Hz band, 30 s window
-hr = HeartRateExtractor.esp32_default()     # 0.8-2.0 Hz band, 15 s window
+br = BreathingExtractor.esp32_default()  # 0.1-0.5 Hz band, 30 s window
+hr = HeartRateExtractor.esp32_default()  # 0.8-2.0 Hz band, 15 s window
 
 # 30 s of synthetic CSI at 100 Hz: 15 breaths/min (0.25 Hz) + 72 beats/min (1.2 Hz).
 for i in range(3000):
@@ -151,7 +151,7 @@ later proposal, made only if users agree.
 ```python
 from wifi_densepose import BreathingExtractor
 
-br = BreathingExtractor.esp32_default()     # 56 subcarriers @ 100 Hz, 30s window
+br = BreathingExtractor.esp32_default()  # 56 subcarriers @ 100 Hz, 30s window
 
 for residuals, weights in your_csi_source:  # one frame at a time
     est = br.extract(residuals=residuals, weights=weights)
@@ -182,11 +182,13 @@ cover these cases; they do not establish accuracy on real CSI or medical use.
 import asyncio
 from wifi_densepose.client import SensingClient, EdgeVitalsMessage
 
+
 async def main():
     async with SensingClient("ws://your-ruview-node:8765/ws/sensing") as c:
         async for msg in c.stream():
             if isinstance(msg, EdgeVitalsMessage):
                 print(msg.presence, msg.breathing_rate_bpm, msg.heartrate_bpm)
+
 
 asyncio.run(main())
 ```
@@ -195,7 +197,9 @@ asyncio.run(main())
 
 ```python
 from wifi_densepose.client import (
-    RuViewMqttClient, SemanticPrimitive, SemanticPrimitiveListener,
+    RuViewMqttClient,
+    SemanticPrimitive,
+    SemanticPrimitiveListener,
 )
 
 listener = SemanticPrimitiveListener()

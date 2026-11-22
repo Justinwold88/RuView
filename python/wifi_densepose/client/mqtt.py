@@ -41,6 +41,7 @@ from typing import Any
 try:
     import paho.mqtt.client as mqtt  # type: ignore[import-not-found]
     from paho.mqtt.enums import CallbackAPIVersion  # type: ignore[import-not-found]
+
     _PAHO_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _PAHO_AVAILABLE = False
@@ -79,7 +80,7 @@ class RuViewMqttClient:
         if not _PAHO_AVAILABLE:
             raise ImportError(
                 "RuViewMqttClient requires the `paho-mqtt` package. Install with "
-                "`pip install \"wifi-densepose[client]\"` to enable the client extras."
+                '`pip install "wifi-densepose[client]"` to enable the client extras.'
             )
         self.broker_host = broker_host
         self.broker_port = broker_port

@@ -58,9 +58,7 @@ def test_parse_discovery_topic_sensor() -> None:
 
 
 def test_parse_discovery_topic_event() -> None:
-    out = parse_discovery_topic(
-        "homeassistant/event/wifi_densepose_aabbccddeeff/fall/config"
-    )
+    out = parse_discovery_topic("homeassistant/event/wifi_densepose_aabbccddeeff/fall/config")
     assert out == ("event", "aabbccddeeff", "fall")
 
 
@@ -114,10 +112,13 @@ def test_parse_discovery_payload_rejects_non_object_root() -> None:
 
 
 def test_parse_discovery_payload_returns_none_for_non_discovery_topic() -> None:
-    assert parse_discovery_payload(
-        "ruview/aabbccddeeff/raw/edge_vitals",
-        _PRESENCE_BODY,
-    ) is None
+    assert (
+        parse_discovery_payload(
+            "ruview/aabbccddeeff/raw/edge_vitals",
+            _PRESENCE_BODY,
+        )
+        is None
+    )
 
 
 # ─── HaEntity projection ─────────────────────────────────────────────

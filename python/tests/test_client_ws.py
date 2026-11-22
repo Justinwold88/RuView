@@ -179,13 +179,17 @@ def test_sensing_client_decoder_directly() -> None:
     server, so we have a fast unit test for the type mapping."""
     from wifi_densepose.client.ws import _decode
 
-    msg = _decode(json.dumps({
-        "type": "edge_vitals",
-        "node_id": "x",
-        "presence": True,
-        "fall_detected": False,
-        "motion": 1.5,
-    }))
+    msg = _decode(
+        json.dumps(
+            {
+                "type": "edge_vitals",
+                "node_id": "x",
+                "presence": True,
+                "fall_detected": False,
+                "motion": 1.5,
+            }
+        )
+    )
     assert isinstance(msg, EdgeVitalsMessage)
     assert msg.presence is True
     assert msg.motion == 1.5
@@ -304,12 +308,10 @@ async def test_empty_token_sends_no_auth_header(monkeypatch: Any) -> None:
     "header_param,expected",
     [
         ("additional_headers", "additional_headers"),  # websockets >= 14
-        ("extra_headers", "extra_headers"),             # websockets <= 13
+        ("extra_headers", "extra_headers"),  # websockets <= 13
     ],
 )
-def test_select_header_kwarg_across_websockets_versions(
-    header_param: str, expected: str
-) -> None:
+def test_select_header_kwarg_across_websockets_versions(header_param: str, expected: str) -> None:
     """Version-compat: the kwarg is chosen by inspecting the installed
     `connect` signature, so both the pre-14 (`extra_headers`) and
     post-14 (`additional_headers`) conventions resolve correctly without
@@ -353,16 +355,20 @@ def test_sensing_client_decoder_handles_None_subfields() -> None:
     measurement yet), the client should propagate None, not crash."""
     from wifi_densepose.client.ws import _decode
 
-    msg = _decode(json.dumps({
-        "type": "edge_vitals",
-        "node_id": "x",
-        "presence": False,
-        "fall_detected": False,
-        "motion": 0.0,
-        "breathing_rate_bpm": None,
-        "heartrate_bpm": None,
-        "rssi": None,
-    }))
+    msg = _decode(
+        json.dumps(
+            {
+                "type": "edge_vitals",
+                "node_id": "x",
+                "presence": False,
+                "fall_detected": False,
+                "motion": 0.0,
+                "breathing_rate_bpm": None,
+                "heartrate_bpm": None,
+                "rssi": None,
+            }
+        )
+    )
     assert isinstance(msg, EdgeVitalsMessage)
     assert msg.breathing_rate_bpm is None
     assert msg.heartrate_bpm is None

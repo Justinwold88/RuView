@@ -145,9 +145,7 @@ def _read_expected(expected: str | os.PathLike[str]) -> str:
     return token[0].lower()
 
 
-def verify_witness(
-    data_path: str | os.PathLike[str], expected: str | os.PathLike[str]
-) -> bool:
+def verify_witness(data_path: str | os.PathLike[str], expected: str | os.PathLike[str]) -> bool:
     """Return True if the pipeline output hash matches ``expected``.
 
     ``expected`` is either a 64-character hex digest or the path of a file

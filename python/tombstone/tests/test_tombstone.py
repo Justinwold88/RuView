@@ -33,9 +33,7 @@ def test_tombstone_contains_v2_install_hint() -> None:
 
 def test_tombstone_contains_migration_url() -> None:
     src = TOMBSTONE.read_text(encoding="utf-8")
-    assert "docs/pip-migration.md" in src, (
-        "tombstone must point users at the migration guide"
-    )
+    assert "docs/pip-migration.md" in src, "tombstone must point users at the migration guide"
 
 
 def test_tombstone_is_minimal() -> None:

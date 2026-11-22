@@ -62,9 +62,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Ruff lint gate for the shipped wheel's Python sources. The rule set and
-  # line length are defined once in python/pyproject.toml ([tool.ruff]); this
-  # job only enforces them. Before it existed the config was never run, and
+  # Ruff lint and format gate for the shipped wheel's Python sources. The rule
+  # set and line length are defined once in python/pyproject.toml ([tool.ruff]);
+  # this job only enforces them. Before it existed the config was never run, and
   # 50 findings had accumulated. Needs no Rust build, so it finishes in
   # seconds and fails fast. Keep the Ruff pin in sync with the ruff-pre-commit
   # rev in .pre-commit-config.yaml.
@@ -87,6 +87,10 @@ jobs:
       - name: ruff check
         working-directory: python
         run: ruff check --output-format=github .
+
+      - name: ruff format --check
+        working-directory: python
+        run: ruff format --check .
 
   # Build the wheel with ALL SOTA features and run the full parity suite.
   # `--features sota` = aether + meridian + mat, so the compiled feature

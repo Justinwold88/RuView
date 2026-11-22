@@ -44,6 +44,7 @@ def run_scan(resp: mat.DisasterResponse) -> None:
 
 # ─── enums / config ──────────────────────────────────────────────────
 
+
 def test_triage_priority_order() -> None:
     assert mat.TriageStatus.Immediate.priority == 1
     assert mat.TriageStatus.Delayed.priority == 2
@@ -57,6 +58,7 @@ def test_disaster_config_fields() -> None:
 
 
 # ─── pipeline behaviour ──────────────────────────────────────────────
+
 
 def test_scan_requires_event() -> None:
     resp = mat.DisasterResponse(mat.DisasterConfig(mat.DisasterType.Unknown))
@@ -88,6 +90,7 @@ def test_scan_detects_survivor_from_breathing_stream() -> None:
 
 
 # ─── §4.1 bit-for-bit parity gate (release-blocking) ─────────────────
+
 
 def test_bit_for_bit_parity_with_native_rust() -> None:
     resp = build_response()

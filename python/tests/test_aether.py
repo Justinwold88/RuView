@@ -106,12 +106,16 @@ def test_config_roundtrips_fields() -> None:
 # Bad dimensions used to reach Rust and either panic (surfacing as an opaque
 # PanicException) or allocate multi-gigabyte matrices that abort the interpreter.
 
-@pytest.mark.parametrize("kwargs", [
-    {"d_model": 0, "d_proj": 128},
-    {"d_model": 64, "d_proj": 0},
-    {"d_model": 100_000, "d_proj": 128},   # unbounded allocation guard
-    {"d_model": 64, "d_proj": 100_000},
-])
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"d_model": 0, "d_proj": 128},
+        {"d_model": 64, "d_proj": 0},
+        {"d_model": 100_000, "d_proj": 128},  # unbounded allocation guard
+        {"d_model": 64, "d_proj": 100_000},
+    ],
+)
 def test_aether_config_rejects_bad_dims(kwargs: dict) -> None:
     with pytest.raises(ValueError):
         aether.AetherConfig(**kwargs)
@@ -131,11 +135,14 @@ def test_extractor_rejects_indivisible_head_count() -> None:
         aether.EmbeddingExtractor(n_subcarriers=56, config=cfg, n_heads=5)
 
 
-@pytest.mark.parametrize("kwargs", [
-    {"n_subcarriers": 0},
-    {"n_subcarriers": 100_000},
-    {"n_keypoints": 0},
-])
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"n_subcarriers": 0},
+        {"n_subcarriers": 100_000},
+        {"n_keypoints": 0},
+    ],
+)
 def test_extractor_rejects_bad_shape(kwargs: dict) -> None:
     cfg = aether.AetherConfig(d_model=64, d_proj=128)
     base = {"n_subcarriers": 56, "config": cfg}
@@ -226,6 +233,7 @@ def test_missing_feature_message_names_the_real_fix() -> None:
 
 # ─── Weight loading (ADR-185 §13.a) ──────────────────────────────────
 
+
 def test_load_weights_is_used_and_matches_native_golden() -> None:
     ext = build_extractor()
     baseline = ext.embed(load_input())  # random Xavier init
@@ -253,10 +261,10 @@ def test_save_then_load_weights_round_trips() -> None:
     inp = load_input()
     with tempfile.TemporaryDirectory() as d:
         wpath = Path(d) / "roundtrip.bin"
-        ext.save_weights(str(wpath))          # serialize current (random) weights
+        ext.save_weights(str(wpath))  # serialize current (random) weights
         emb_before = ext.embed(inp)
         ext2 = build_extractor()
-        ext2.load_weights(str(wpath))         # load them into a fresh extractor
+        ext2.load_weights(str(wpath))  # load them into a fresh extractor
     assert ext2.embed(inp) == emb_before
 
 

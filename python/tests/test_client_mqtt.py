@@ -31,30 +31,39 @@ from wifi_densepose.client.mqtt import _topic_matches
 # ─── Topic wildcard matcher ──────────────────────────────────────────
 
 
-@pytest.mark.parametrize("pattern,topic,expected", [
-    ("ruview/+/raw/edge_vitals", "ruview/aabb/raw/edge_vitals", True),
-    ("ruview/+/raw/edge_vitals", "ruview/aabb/cooked/edge_vitals", False),
-    ("ruview/+/raw/+", "ruview/aabb/raw/pose", True),
-    ("ruview/+/raw/+", "ruview/aabb/raw/pose/extra", False),
-    # Per MQTT v5 §4.7.1.2: `+` is a whole-level wildcard only — mid-
-    # segment `+` is a literal `+` character, not a wildcard. The
-    # spec-correct way to wildcard the third segment of the HA
-    # discovery topic is `homeassistant/+/+/+/config`.
-    ("homeassistant/+/+/+/config",
-     "homeassistant/binary_sensor/wifi_densepose_aabb/presence/config", True),
-    # `wifi_densepose_+` is therefore NOT a wildcard — it matches the
-    # literal string only. Asserting that behaviour stays stable.
-    ("homeassistant/+/wifi_densepose_+/+/config",
-     "homeassistant/binary_sensor/wifi_densepose_aabb/presence/config", False),
-    ("ruview/#", "ruview/aabb/raw/edge_vitals", True),
-    # Per MQTT v5 §4.7.1.2: `<prefix>/#` ALSO matches the bare
-    # `<prefix>` itself (it represents "this topic and all sub-topics").
-    ("ruview/#", "ruview", True),
-    ("ruview/+/raw/#", "ruview/aabb/raw/pose/extra", True),
-    ("exact/topic", "exact/topic", True),
-    ("exact/topic", "exact/topic/extra", False),
-    ("a/b/c", "a/b", False),
-])
+@pytest.mark.parametrize(
+    "pattern,topic,expected",
+    [
+        ("ruview/+/raw/edge_vitals", "ruview/aabb/raw/edge_vitals", True),
+        ("ruview/+/raw/edge_vitals", "ruview/aabb/cooked/edge_vitals", False),
+        ("ruview/+/raw/+", "ruview/aabb/raw/pose", True),
+        ("ruview/+/raw/+", "ruview/aabb/raw/pose/extra", False),
+        # Per MQTT v5 §4.7.1.2: `+` is a whole-level wildcard only — mid-
+        # segment `+` is a literal `+` character, not a wildcard. The
+        # spec-correct way to wildcard the third segment of the HA
+        # discovery topic is `homeassistant/+/+/+/config`.
+        (
+            "homeassistant/+/+/+/config",
+            "homeassistant/binary_sensor/wifi_densepose_aabb/presence/config",
+            True,
+        ),
+        # `wifi_densepose_+` is therefore NOT a wildcard — it matches the
+        # literal string only. Asserting that behaviour stays stable.
+        (
+            "homeassistant/+/wifi_densepose_+/+/config",
+            "homeassistant/binary_sensor/wifi_densepose_aabb/presence/config",
+            False,
+        ),
+        ("ruview/#", "ruview/aabb/raw/edge_vitals", True),
+        # Per MQTT v5 §4.7.1.2: `<prefix>/#` ALSO matches the bare
+        # `<prefix>` itself (it represents "this topic and all sub-topics").
+        ("ruview/#", "ruview", True),
+        ("ruview/+/raw/#", "ruview/aabb/raw/pose/extra", True),
+        ("exact/topic", "exact/topic", True),
+        ("exact/topic", "exact/topic/extra", False),
+        ("a/b/c", "a/b", False),
+    ],
+)
 def test_topic_matches(pattern: str, topic: str, expected: bool) -> None:
     assert _topic_matches(pattern, topic) is expected
 
@@ -203,10 +212,14 @@ def test_documented_ha_state_pattern_subscribes_and_reaches_listener() -> None:
     # connection, so this exercises the same subscribe() the broker path runs.
     c._on_connect(c._client, None, None, 0)
 
-    c._on_message(None, None, _fake_message(
-        "homeassistant/binary_sensor/wifi_densepose_aabb/someone_sleeping/state",
-        {"state": "ON", "confidence": 0.9},
-    ))
+    c._on_message(
+        None,
+        None,
+        _fake_message(
+            "homeassistant/binary_sensor/wifi_densepose_aabb/someone_sleeping/state",
+            {"state": "ON", "confidence": 0.9},
+        ),
+    )
     assert [(e.kind, e.node_id, e.state) for e in received] == [
         (SemanticPrimitive.SomeoneSleeping, "aabb", "ON"),
     ]

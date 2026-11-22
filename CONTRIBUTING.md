@@ -52,7 +52,8 @@ These are non-negotiable and reviewers will block a PR that breaks them:
 | `.github/workflows/` | CI and release gates (authoritative) |
 
 Several directories under `vendor/` and `v2/crates/` are git submodules; see
-[`.gitmodules`](.gitmodules).
+[`.gitmodules`](.gitmodules). [ARCHITECTURE.md](ARCHITECTURE.md) shows how data
+flows from a node through the sensing server to its consumers.
 
 ## Development setup
 

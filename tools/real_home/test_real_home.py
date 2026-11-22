@@ -228,6 +228,15 @@ class LabelTests(unittest.TestCase):
         report, _ = self.summary(rows)
         self.assertEqual(report["days"]["1"]["still_minutes_in_area"], 19.0)
 
+    def test_pets_alone_is_guarded_and_kept_apart_from_empty_home(self):
+        rows = [(at(1, 9), "home_empty_start"), (at(1, 12), "home_empty_end"),
+                (at(1, 13), "pets_alone_start"), (at(1, 17), "pets_alone_end")]
+        report, scoring = self.summary(rows)
+        day1 = report["days"]["1"]
+        self.assertAlmostEqual(day1["empty_home_hours"], 3 - 150 / 3600, places=3)
+        self.assertAlmostEqual(day1["pets_alone_hours"], 4 - 150 / 3600, places=3)
+        self.assertEqual(sorted(i["state"] for i in scoring["intervals"]), ["home_empty", "pets_alone"])
+
     def test_rejects_bad_files(self):
         cases = [
             [(at(1, 9), "home_empty_start"), (at(1, 10), "still_start", "S1"), (at(1, 11), "still_end", "S1"),
@@ -239,6 +248,10 @@ class LabelTests(unittest.TestCase):
             [(at(1, 10), "home_empty_start"), (at(1, 9), "home_empty_end")],   # out of order
             [(at(1, 9), "home_empty_start"), (at(1, 9, 30), "walk_in", "", "door"),
              (at(1, 10), "home_empty_end")],                                    # walk-in while home empty
+            [(at(1, 9), "pets_alone_start"), (at(1, 9, 30), "walk_in", "", "door"),
+             (at(1, 10), "pets_alone_end")],                                    # walk-in while pets alone
+            [(at(1, 9), "home_empty_start"), (at(1, 10), "pets_alone_start"),
+             (at(1, 11), "pets_alone_end"), (at(1, 12), "home_empty_end")],    # pets loose and confined at once
         ]
         for rows in cases:
             with self.subTest(rows=rows), self.assertRaises(labels.LabelError):

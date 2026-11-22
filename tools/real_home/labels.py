@@ -27,14 +27,14 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 FIELDS = ("time_utc", "room", "event", "spot", "source", "note")
-STATES = ("home_empty", "room_empty", "still", "sleep", "pet_only", "exclude")
+STATES = ("home_empty", "room_empty", "still", "sleep", "pet_only", "pets_alone", "exclude")
 EVENTS = frozenset([f"{s}_{edge}" for s in STATES for edge in ("start", "end")] + ["walk_in"])
 WALK_IN_SOURCES = ("door", "button", "mmwave")
 # Guard bands in seconds (start, end), frozen in the protocol.
 GUARDS = {"home_empty": (120, 30), "room_empty": (120, 30), "still": (30, 30), "sleep": (30, 30),
-          "pet_only": (0, 0), "exclude": (0, 0)}
+          "pet_only": (0, 0), "pets_alone": (120, 30), "exclude": (0, 0)}
 # States that cannot overlap each other in one room.
-EXCLUSIVE = (("home_empty", "room_empty", "still", "sleep", "pet_only"),)
+EXCLUSIVE = (("home_empty", "room_empty", "still", "sleep", "pet_only", "pets_alone"),)
 DAY_BOUNDARY = dtime(4, 0)
 TRAIN_DAYS = 3
 MAX_EXCLUDED_HOURS = 6.0
@@ -185,7 +185,8 @@ def summarize(rows, zone, in_area_spots=None):
     def bucket(number):
         return days.setdefault(number, {"empty_home_hours": 0.0, "room_empty_hours": 0.0,
                                         "still_minutes_in_area": 0.0, "still_minutes_outside": 0.0,
-                                        "sleep_hours": 0.0, "pet_only_minutes": 0.0, "walk_ins": 0,
+                                        "sleep_hours": 0.0, "pet_only_minutes": 0.0,
+                                        "pets_alone_hours": 0.0, "walk_ins": 0,
                                         "walk_ins_without_empty_lead": 0, "excluded_hours": 0.0})
 
     scoring = []
@@ -217,6 +218,8 @@ def summarize(rows, zone, in_area_spots=None):
                     totals["sleep_hours"] += seconds / 3600
                 elif state == "pet_only":
                     totals["pet_only_minutes"] += seconds / 60
+                elif state == "pets_alone":
+                    totals["pets_alone_hours"] += seconds / 3600
                 else:
                     totals["excluded_hours"] += seconds / 3600
                 if state != "exclude":
@@ -227,7 +230,7 @@ def summarize(rows, zone, in_area_spots=None):
                     scoring.append(item)
                 cursor = stop
     scored_walk_ins = []
-    occupied = [i for i in intervals if i["state"] in ("home_empty", "still", "sleep", "pet_only")]
+    occupied = [i for i in intervals if i["state"] in ("home_empty", "still", "sleep", "pet_only", "pets_alone")]
     for walk in walk_ins:
         number = day_of(walk["time"], zone, first_day)
         totals = bucket(number)

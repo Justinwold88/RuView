@@ -30,6 +30,8 @@ device.
     least 2 m × 1.2 m.
   - Furniture and hard edges are at least 1 m from the mat.
   - Nobody falls from a height, from furniture, or onto a bed frame.
+  - Pets are shut out of the room for the whole session, so none can run
+    onto the mat or under a fall.
 - **How.**
   - Falls are controlled: knees first, then hip and forearm, chin tucked. This
     is practised slowly first.

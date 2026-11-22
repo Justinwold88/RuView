@@ -1017,6 +1017,7 @@ sensing-server --mqtt --mqtt-host <broker> --mqtt-tls --privacy-mode
 - WebSocket streams: `/ws/sensing` and `/api/v1/stream/pose` frames are filtered the same way.
 - Recordings started with `POST /api/v1/recording/start` are written already filtered.
 - MQTT and Matter: those entities are neither announced nor published.
+- The signal field never draws its breathing ring, so it doesn't show whether a breathing rate was measured.
 
 Presence, motion, person count, zones and the coarse posture label are still served, and semantic primitives stay published because they're inferred *states*, not biometric *values*. Some of those states (sleeping, possible distress) are derived from vitals, so they are still health-related information. Privacy mode reduces what leaves the server. It does not by itself make a deployment compliant with any regulation.
 

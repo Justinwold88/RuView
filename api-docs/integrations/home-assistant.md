@@ -196,7 +196,7 @@ ADR-115 §3.12.5 specifies a zone-tag file and a threshold-override file. Neithe
 
 When deploying in **healthcare**, **AAL (aging-in-place)**, or **commercial** settings, set `--privacy-mode`. This:
 
-- **Strips** heart rate and breathing rate from every outbound MQTT publication and, in the same way, from REST responses, WebSocket frames and recordings (pose is never announced over MQTT; see [Not announced](#not-announced)).
+- **Strips** heart rate and breathing rate from every outbound MQTT publication and, in the same way, from REST responses, WebSocket frames and recordings (pose is never announced over MQTT; see [Not announced](#not-announced)). The signal field's breathing ring is not drawn either, so the field doesn't show whether a breathing rate was measured.
 - **Suppresses discovery** for those entities entirely: Home Assistant never sees them, and no availability or state topic is published for them.
 - **Keeps the semantic primitives enabled.** `someone_sleeping` and `possible_distress` (the latter only with `--mqtt-publish-heart-rate`) still use breathing and heart rate *inside the server*; only the ON/OFF state crosses the wire (ADR-115 §3.12.3). If that is too much for your deployment, drop those two entities in Home Assistant.
 

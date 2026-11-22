@@ -1023,7 +1023,7 @@ Presence, motion, person count, zones and the coarse posture label are still ser
 
 ### Matter Bridge (Apple Home / Google Home / Alexa / SmartThings)
 
-Not available yet. The `--matter` and `--matter-setup-file` flags from ADR-115 are defined in the crate's library CLI, but the `sensing-server` binary doesn't accept them (`error: unexpected argument '--matter' found`), so there's no way to start the Matter bridge today. Use the MQTT integration above for Home Assistant in the meantime.
+Not available yet. The `--matter` and `--matter-setup-file` flags from ADR-115 are defined in the crate's library CLI, but the `sensing-server` binary doesn't accept them (`error: unexpected argument '--matter' found`), so there's no way to start the Matter bridge today. Use the MQTT integration above for Home Assistant in the meantime. For Alexa, see [Alexa (through Home Assistant)](integrations/home-assistant.md#alexa-through-home-assistant).
 
 Detailed entity reference, blueprint catalog, troubleshooting recipe matrix: see [`docs/integrations/home-assistant.md`](integrations/home-assistant.md).
 

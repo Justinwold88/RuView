@@ -281,7 +281,9 @@ wiremock = "0.5"
 # Security Scanning job audits: quinn-proto >=0.11.18
 # (RUSTSEC-2026-0338/0339/0340/0341/0342), rustls >=0.23.46
 # (RUSTSEC-2026-0346/0347/0348/0349) and wasmtime >=36.0.23
-# (RUSTSEC-2026-0363/0379/0380/0424, and 0566/0569/0571 from 36.0.21). A plain `cargo update` can walk them backwards;
+# (RUSTSEC-2026-0363/0379/0380/0424/0566/0569/0571; 36.0.21 is the first
+# release with the last three, and the fork keeps the newer 36.0.23).
+# A plain `cargo update` can walk them backwards;
 # keep the lockfile at or above these until the direct requirements
 # enforce them.
 #

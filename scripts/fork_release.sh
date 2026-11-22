@@ -13,7 +13,8 @@
 #   - The notes are a short header, the changelog fragments (changelog.d/)
 #     added since the previous fork tag, and GitHub's generated list of pull
 #     requests merged since then. The first release starts at fork-base, the
-#     fork point.
+#     fork point (upstream 13b47883); the script creates that tag if it is
+#     missing.
 #   - Firmware bundles from the newest successful Firmware CI run on main are
 #     attached when firmware/ and firmware-ci.yml are unchanged between that
 #     run's commit and the tag. Otherwise the notes say none are attached.
@@ -44,11 +45,27 @@ if ! git merge-base --is-ancestor "$commit" refs/remotes/origin/main; then
   exit 1
 fi
 
-previous="$(git tag --list 'fork-*' --merged "$commit" --sort=-creatordate | grep -vxF "$tag" | head -n 1 || true)"
-if [[ -z "$previous" ]] && git rev-parse --verify --quiet "refs/tags/fork-base" >/dev/null; then
+# The upstream commit the fork started from. Release notes for the first fork
+# release start here.
+fork_base_commit="${FORK_BASE_COMMIT:-13b47883a73d5070f35a3f04aec2ffa778b47e29}"
+
+previous="$(git tag --list 'fork-[0-9]*' --merged "$commit" --sort=-creatordate | grep -vxF "$tag" | head -n 1 || true)"
+start="$previous"
+if [[ -z "$previous" ]]; then
   previous="fork-base"
+  start="fork-base"
+  if ! git rev-parse --verify --quiet "refs/tags/fork-base" >/dev/null; then
+    git cat-file -e "$fork_base_commit^{commit}"
+    start="$fork_base_commit"
+    if $dry_run; then
+      echo "[dry-run] would create tag fork-base at ${fork_base_commit:0:8}"
+    else
+      git tag fork-base "$fork_base_commit"
+      git push --quiet origin refs/tags/fork-base
+    fi
+  fi
 fi
-echo "release $tag at $(git rev-parse --short "$commit"); notes start at ${previous:-the beginning}"
+echo "release $tag at $(git rev-parse --short "$commit"); notes start at $previous"
 
 repo="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
 work="$(mktemp -d)"
@@ -94,7 +111,7 @@ EOF
 
 # Changelog fragments added since the previous fork tag, oldest first, if the
 # release still contains them.
-range="${previous:+$previous..}$commit"
+range="$start..$commit"
 mapfile -t fragments < <(git log --reverse --diff-filter=A --name-only --format= "$range" -- 'changelog.d/*.md' \
                            | awk 'NF && $0 != "changelog.d/README.md" && !seen[$0]++')
 present=()

@@ -1,0 +1,39 @@
+name: Upstream sync
+
+# Proposes a merge of upstream ruvnet/RuView main into this fork's main, once
+# a week or on demand. It never merges anything: a clean merge becomes a pull
+# request (merge it with a merge commit, not a squash), and a conflicting one
+# becomes an issue that lists the files. Logic and local dry run:
+# scripts/upstream_sync.sh --dry-run
+
+on:
+  schedule:
+    - cron: "17 15 * * 1" # Mondays 15:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write # push the sync/upstream-* branch
+  pull-requests: write # open the sync pull request
+  issues: write # report conflicts
+  actions: write # start the required checks on the sync branch
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Propose upstream sync
+    # Only forks sync from upstream.
+    if: github.repository != 'ruvnet/RuView'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Propose the merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/upstream_sync.sh

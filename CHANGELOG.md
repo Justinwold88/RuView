@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Public BFI test, protocol version 4 (ADR-429).** Protocol 3 admitted every
+  file and report, but coverage fell short in one of 80 cells: train activity S
+  (washing hands) has no recording with an eligible interval, which keeps
+  ADR-365's A–T rule from ever admitting the benchmark on this manifest.
+  ADR-429 amends that rule for protocol 4 only: S is left out of admission and
+  scoring, explicitly and reported. S files still go through the whole census
+  and the decoder oracle. The choice was made from protocol 3's coverage table
+  alone, before any score existed. New workflow choice `public-bfi-motion-4`;
+  the frozen protocol is `tools/bfi_learning/PUBLIC-BFI-MOTION-4.md`.
+  Protocols 1–3 are unchanged. ADR-365 now links ADR-428 and ADR-429.
+
 - **Choose your vitals method: `classic` (default) or `detector` (plan item
   4.1).** The vitals crate's new `VitalsEstimator` runs either method behind
   one interface, chosen with `VitalsMethod`:

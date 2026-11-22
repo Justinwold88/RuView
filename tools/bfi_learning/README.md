@@ -162,7 +162,11 @@ aggregate numbers leave the runner. Protocol version 2
 ([PUBLIC-BFI-MOTION-2.md](PUBLIC-BFI-MOTION-2.md), `--protocol
 public-bfi-motion-2`) adds the ADR-427 policy, which admits complete,
 CRC-checked frames that carry nonzero fragment bits; version 1 stays
-reproducible.
+reproducible. Version 3 ([PUBLIC-BFI-MOTION-3.md](PUBLIC-BFI-MOTION-3.md))
+replaces that with the ADR-428 Sequence Control counter policy. Version 4
+([PUBLIC-BFI-MOTION-4.md](PUBLIC-BFI-MOTION-4.md)) keeps the ADR-428 policy
+and leaves activity S out of admission and scoring (ADR-429), because train S
+has no eligible interval.
 
 ```bash
 python tools/bfi_learning/download_public_bfi.py --include-heldout --output /private/bfi

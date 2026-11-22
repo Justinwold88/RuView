@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Public BFI motion test, protocols public-bfi-motion-1 to -3 (PUBLIC-BFI-MOTION*.md).
+"""Public BFI motion test, protocols public-bfi-motion-1 to -4 (PUBLIC-BFI-MOTION*.md).
 
 Offline and bounded. Reads a private download made by download_public_bfi.py and
 runs the ADR-365 quality census on all four partition/view groups. Checks the
@@ -38,13 +38,13 @@ import download_public_bfi as download  # noqa: E402
 import public_bfi_decode  # noqa: E402
 
 PROTOCOL = "public-bfi-motion-1"
-PROTOCOLS = ("public-bfi-motion-1", "public-bfi-motion-2", "public-bfi-motion-3")
+PROTOCOLS = ("public-bfi-motion-1", "public-bfi-motion-2", "public-bfi-motion-3", "public-bfi-motion-4")
 # ADR-427: the only route by which a nonzero fragment number is admitted in protocol 2.
 FRAGMENT_POLICY = "csi-bfi-har-complete-mpdu-v1"
 # ADR-428: the route in protocol 3, which reads all 16 Sequence Control bits as one counter.
 COUNTER_POLICY = "csi-bfi-har-seqctl-counter-v1"
 POLICIES = {"public-bfi-motion-1": None, "public-bfi-motion-2": FRAGMENT_POLICY,
-            "public-bfi-motion-3": COUNTER_POLICY}
+            "public-bfi-motion-3": COUNTER_POLICY, "public-bfi-motion-4": COUNTER_POLICY}
 SIBLING_WINDOW_NS = 1_000_000_000
 DUPLICATE_WINDOW_NS = 1_000_000_000
 WIRESHARK_VERSION = "4.2.2"
@@ -63,6 +63,9 @@ RETRY_WINDOW_NS = NS
 RETRY_CACHE = 4096
 ACTIVITIES = tuple("ABCDEFGHIJKLMNOPQRST")
 MOVING = frozenset("ABCDGKLOQ")
+# ADR-429: protocol 4 leaves activity S out of benchmark admission and scoring. Its files
+# still go through the whole quality census and the decoder oracle.
+EXCLUDED_ACTIVITIES = {"public-bfi-motion-4": frozenset("S")}
 GROUPS = download.SPLITS
 FIT_GROUP, SCORE_GROUP = "train", "validation"
 SHB, IDB, OPB, SPB, EPB = 0x0A0D0D0A, 1, 2, 3, 6
@@ -87,6 +90,13 @@ BODY_ERRORS = {"expected exactly 1003 bytes of action body": "rejected_body_leng
 require = decoder.require
 DecodeError = decoder.DecodeError
 assert MOVING < frozenset(ACTIVITIES)
+assert all(e <= frozenset(ACTIVITIES) - MOVING for e in EXCLUDED_ACTIVITIES.values())
+
+
+def study_activities(protocol):
+    """The activity codes that a protocol admits and scores, in code order."""
+    excluded = EXCLUDED_ACTIVITIES.get(protocol, frozenset())
+    return tuple(a for a in ACTIVITIES if a not in excluded)
 
 
 # ---------------------------------------------------------------- file layer
@@ -576,13 +586,14 @@ def summarize(records, downloaded_groups):
     return groups
 
 
-def admission(groups, records):
+def admission(groups, records, activities=ACTIVITIES):
+    """Coverage is required for every code in `activities`; the census still covers all of A-T."""
     reasons, shortfalls = [], []
     for group in GROUPS:
         if not groups[group]["downloaded"]:
             reasons.append(f"group_not_downloaded:{group}")
         for activity, recordings in groups[group]["recordings_with_eligible_interval_by_activity"].items():
-            if recordings < MIN_RECORDINGS:
+            if activity in activities and recordings < MIN_RECORDINGS:
                 shortfalls.append({"group": group, "activity": activity, "recordings": recordings})
     if shortfalls:
         reasons.append("activity_coverage_below_two_recordings")
@@ -626,15 +637,16 @@ def fit_threshold(values, moving):
     return best
 
 
-def score(features_by_file, records):
-    """Fit on train intervals, report validation intervals and recordings."""
+def score(features_by_file, records, activities=ACTIVITIES):
+    """Fit on train intervals, report validation intervals and recordings, for `activities` only."""
     rows = {group: [] for group in (FIT_GROUP, SCORE_GROUP)}
     for record, features in zip(records, features_by_file):
-        if record["group"] in rows:
+        if record["group"] in rows and record["activity"] in activities:
             for motion, timing in features:
                 rows[record["group"]].append((record, motion, timing))
     labels = {g: [r["activity"] in MOVING for r, _, _ in rows[g]] for g in rows}
-    result = {"positive_class": "moving", "moving_codes": "".join(sorted(MOVING))}
+    result = {"positive_class": "moving", "moving_codes": "".join(sorted(MOVING)),
+              "scored_codes": "".join(activities)}
     for name, column in (("bfi_motion", 1), ("timing_only", 2)):
         train = [row[column] for row in rows[FIT_GROUP]]
         fitted = fit_threshold(train, labels[FIT_GROUP])
@@ -658,7 +670,7 @@ def score(features_by_file, records):
     per_activity = {}
     for group in rows:
         per_activity[group] = {}
-        for activity in ACTIVITIES:
+        for activity in activities:
             values = [(m, t) for r, m, t in rows[group] if r["activity"] == activity]
             per_activity[group][activity] = {
                 "group": "moving" if activity in MOVING else "still",
@@ -683,6 +695,8 @@ def markdown(report):
              f"- Workflow run: {report['workflow_run']}",
              f"- Wireshark: {report['tools']['wireshark']}",
              f"- Fragment policy: {report.get('fragment_policy') or 'none (nonzero fragment numbers quarantined)'}",
+             *([f"- Activities left out of admission and scoring: {', '.join(report['excluded_activities'])} "
+                "(their files are still in the census and the oracle)"] if report.get("excluded_activities") else []),
              "",
              "## Quality census", "",
              "| Group | Files | Admitted files | With eligible interval | Eligible intervals | Eligible seconds |",
@@ -694,8 +708,11 @@ def markdown(report):
         lines.append(f"| {group} | {row['files']} | {row['admitted_files']} | "
                      f"{row['files_with_eligible_intervals']} | {row['eligible_intervals']} | "
                      f"{row['eligible_seconds']:.0f} |")
-    lines += ["", "Recordings with at least one eligible interval, per activity (admission needs 2):", "",
-              "| Group | " + " | ".join(ACTIVITIES) + " |", "|---|" + "---|" * len(ACTIVITIES)]
+    excluded = set(report.get("excluded_activities", ()))
+    lines += ["", "Recordings with at least one eligible interval, per activity (admission needs 2"
+              + ("; codes marked * are left out of admission" if excluded else "") + "):", "",
+              "| Group | " + " | ".join(a + ("*" if a in excluded else "") for a in ACTIVITIES) + " |",
+              "|---|" + "---|" * len(ACTIVITIES)]
     for group, row in report["census"]["groups"].items():
         coverage = row["recordings_with_eligible_interval_by_activity"]
         lines.append(f"| {group} | " + " | ".join(str(coverage[a]) for a in ACTIVITIES) + " |")
@@ -738,7 +755,7 @@ def markdown(report):
                   "Per-activity median motion feature (radians) and eligible intervals:", "",
                   "| Activity | Group | Train median | Train n | Validation median | Validation n |",
                   "|---|---|---|---|---|---|"]
-        for activity in ACTIVITIES:
+        for activity in scores["per_activity"][FIT_GROUP]:
             t, v = scores["per_activity"][FIT_GROUP][activity], scores["per_activity"][SCORE_GROUP][activity]
             fmt = lambda x: "—" if x is None else f"{x:.4f}"  # noqa: E731
             lines.append(f"| {activity} | {t['group']} | {fmt(t['median_motion'])} | {t['intervals']} | "
@@ -770,8 +787,16 @@ def limitations(protocol):
                       "(ADR-428): complete, CRC-checked Action No Ack reports, in files with no More "
                       "Fragments frame, without a repeated 16-bit Sequence Control value. Not comparable "
                       "to versions 1 or 2.",
+        PROTOCOLS[3]: f"Nonzero-fragment frames are admitted only under the named policy {COUNTER_POLICY} "
+                      "(ADR-428), as in version 3.",
     }[protocol]
-    return [fragment if item == "FRAGMENT_LIMITATION" else item for item in LIMITATIONS]
+    items = [fragment if item == "FRAGMENT_LIMITATION" else item for item in LIMITATIONS]
+    if protocol in EXCLUDED_ACTIVITIES:
+        codes = ", ".join(sorted(EXCLUDED_ACTIVITIES[protocol]))
+        items.append(f"Activity {codes} is left out of benchmark admission and scoring (ADR-429), so the task is "
+                     f"{len(study_activities(protocol))} activities, not A-T. The exclusion was decided from "
+                     "version 3's coverage table before any score existed. Not comparable to versions 1, 2 or 3.")
+    return items
 
 
 def run(root, tools, commit, run_url, log=print, protocol=PROTOCOL):
@@ -798,9 +823,10 @@ def run(root, tools, commit, run_url, log=print, protocol=PROTOCOL):
             features.append(file_features)
             detail = record.get("reason") or f"eligible_intervals={record.get('eligible_intervals', 0)}"
             log(f"[{number}/{len(entries)}] {entry['path']}: {record['status']} {detail}")
+    activities = study_activities(protocol)
     groups = summarize(records, downloaded_groups)
-    gate = admission(groups, records)
-    scores = score(features, records) if gate["admitted"] else None
+    gate = admission(groups, records, activities)
+    scores = score(features, records, activities) if gate["admitted"] else None
     if policy:
         policy_compared = sum(r.get("oracle", {}).get("policy_compared", 0) for r in records)
         gate["oracle"]["policy_reports_compared"] = policy_compared
@@ -809,6 +835,7 @@ def run(root, tools, commit, run_url, log=print, protocol=PROTOCOL):
             gate["admitted"] = False
             scores = None
     return {"protocol": protocol, "fragment_policy": policy_name,
+            "excluded_activities": sorted(EXCLUDED_ACTIVITIES.get(protocol, ())),
             "evidence": "MEASURED",
             "data": "public CSI-BFI-HAR BFI captures (GPL-3.0 dataset; data not redistributed)",
             "dataset_revision": download.REVISION, "manifest_sha256": download.MANIFEST_SHA256,
@@ -832,7 +859,8 @@ def main(argv=None):
     parser.add_argument("--run-url", default="local run")
     parser.add_argument("--protocol", choices=PROTOCOLS, default=PROTOCOL,
                         help="public-bfi-motion-2 adds the ADR-427 fragment policy; "
-                             "public-bfi-motion-3 the ADR-428 Sequence Control counter policy")
+                             "public-bfi-motion-3 the ADR-428 Sequence Control counter policy; "
+                             "public-bfi-motion-4 that policy with activity S left out (ADR-429)")
     args = parser.parse_args(argv)
     try:
         tools = {name: shutil.which(getattr(args, name)) for name in ("tshark", "editcap")}

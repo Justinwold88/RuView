@@ -9,11 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       protocol:
-        description: 'Frozen protocol: public-bfi-motion-1 (strict ADR-365), public-bfi-motion-2 (ADR-427 fragment policy) or public-bfi-motion-3 (ADR-428 Sequence Control counter policy)'
+        description: 'Frozen protocol: public-bfi-motion-1 (strict ADR-365), public-bfi-motion-2 (ADR-427 fragment policy), public-bfi-motion-3 (ADR-428 Sequence Control counter policy) or public-bfi-motion-4 (ADR-428 policy, activity S left out per ADR-429)'
         type: choice
         options:
           - public-bfi-motion-2
           - public-bfi-motion-3
+          - public-bfi-motion-4
           - public-bfi-motion-1
         default: public-bfi-motion-2
 

@@ -1,18 +1,24 @@
 # WiFi-DensePose Rust Crates
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
-[![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
-[![Workspace](https://img.shields.io/badge/workspace-14%20crates-green.svg)](https://github.com/ruvnet/wifi-densepose)
+[![Rust 1.89](https://img.shields.io/badge/rust-1.89-orange.svg)](../rust-toolchain.toml)
 [![RuVector v2.0.4](https://img.shields.io/badge/ruvector-v2.0.4-purple.svg)](https://crates.io/crates/ruvector-mincut)
-[![Tests](https://img.shields.io/badge/tests-542%2B-brightgreen.svg)](#testing)
 
 **See through walls with WiFi. No cameras. No wearables. Just radio waves.**
+
+> **Scope of this page.** It describes the original core crates. The workspace
+> has since grown far beyond them (HOMECORE, the `ruview-*` research crates,
+> the portable kernel and more). For the current map, see
+> [ARCHITECTURE.md](../../ARCHITECTURE.md). For the full crate list, run
+> `cargo metadata --no-deps` in `v2/`.
 
 A modular Rust workspace for WiFi-based human pose estimation, vital sign monitoring, and disaster response using Channel State Information (CSI). Built on [RuVector](https://crates.io/crates/ruvector-mincut) graph algorithms and the [WiFi-DensePose](https://github.com/ruvnet/wifi-densepose) research platform by [rUv](https://github.com/ruvnet).
 
 ---
 
 ## Performance
+
+CLAIMED: no reproducer is linked for these figures, and the Python and Rust columns weren't measured in one documented run. For the sensing server's MEASURED per-frame time, see the scenario harness report (`RUVIEW_SCENARIO_REPORT`).
 
 | Operation | Python v1 | Rust v2 | Speedup |
 |-----------|-----------|---------|---------|
@@ -30,8 +36,6 @@ A modular Rust workspace for WiFi-based human pose estimation, vital sign monito
 | Crate | Description | crates.io |
 |-------|-------------|-----------|
 | [`wifi-densepose-core`](wifi-densepose-core/) | Types, traits, and utilities (`CsiFrame`, `PoseEstimate`, `SignalProcessor`) | [![crates.io](https://img.shields.io/crates/v/wifi-densepose-core.svg)](https://crates.io/crates/wifi-densepose-core) |
-| [`wifi-densepose-config`](wifi-densepose-config/) | Configuration management (env, TOML, YAML) | [![crates.io](https://img.shields.io/crates/v/wifi-densepose-config.svg)](https://crates.io/crates/wifi-densepose-config) |
-| [`wifi-densepose-db`](wifi-densepose-db/) | Database persistence (PostgreSQL, SQLite, Redis) | [![crates.io](https://img.shields.io/crates/v/wifi-densepose-db.svg)](https://crates.io/crates/wifi-densepose-db) |
 
 ### Signal Processing & Sensing
 
@@ -66,7 +70,6 @@ A modular Rust workspace for WiFi-based human pose estimation, vital sign monito
 
 | Crate | Description | crates.io |
 |-------|-------------|-----------|
-| [`wifi-densepose-api`](wifi-densepose-api/) | REST + WebSocket API layer | [![crates.io](https://img.shields.io/crates/v/wifi-densepose-api.svg)](https://crates.io/crates/wifi-densepose-api) |
 | [`wifi-densepose-cli`](wifi-densepose-cli/) | Command-line tool for MAT disaster scanning | [![crates.io](https://img.shields.io/crates/v/wifi-densepose-cli.svg)](https://crates.io/crates/wifi-densepose-cli) |
 
 ---
@@ -97,11 +100,9 @@ A modular Rust workspace for WiFi-based human pose estimation, vital sign monito
                                 |
               +-----------------+-----------------+
               |                 |                 |
-    wifi-densepose-api  wifi-densepose-wasm  wifi-densepose-cli
-    (REST/WS)           (browser WASM)       (CLI tool)
-              |
-    wifi-densepose-sensing-server
-    (Axum + WebSocket)
+    wifi-densepose-     wifi-densepose-wasm  wifi-densepose-cli
+    sensing-server      (browser WASM)       (CLI tool)
+    (Axum REST + WS)
 ```
 
 ## RuVector Integration

@@ -41,3 +41,31 @@ jobs:
         run: python -B -m unittest discover -s tools/bfi -v
       - name: Test offline learning and data admission
         run: python -B -m unittest discover -s tools/bfi_learning -v
+
+  wireshark-oracle-tests:
+    # The decoder-oracle, lossless-conversion and census tests need tshark and
+    # editcap 4.2.2 and are skipped without them. Before this job they ran only
+    # inside the manual public-bfi-motion.yml run.
+    name: BFI Wireshark oracle tests (tshark 4.2.2)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - name: Install numpy
+        run: python -m pip install numpy==2.4.2
+      - name: Install Wireshark (tshark, editcap) and require exactly 4.2.2
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tshark
+          tshark --version | head -1 | tee /dev/stderr | grep -Eq '^TShark \(Wireshark\) 4\.2\.2 '
+          editcap --version | head -1 | tee /dev/stderr | grep -Eq '^Editcap \(Wireshark\) 4\.2\.2 '
+      - name: Public BFI motion tests, with the Wireshark tests required
+        working-directory: tools/bfi_learning
+        env:
+          RUVIEW_REQUIRE_WIRESHARK: "1"
+        run: python -B -m unittest test_public_bfi_motion -v

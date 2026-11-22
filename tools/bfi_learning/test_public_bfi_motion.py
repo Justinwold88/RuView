@@ -2,12 +2,14 @@
 import math
 import os
 import shutil
+import statistics
 import struct
 import tempfile
 import unittest
 import zlib
 from pathlib import Path
 
+import numpy as np
 import public_bfi_motion as motion
 
 AP, STA, OTHER = bytes.fromhex("020000000001"), bytes.fromhex("020000000002"), bytes.fromhex("020000000003")
@@ -339,9 +341,10 @@ class CounterPolicyTests(unittest.TestCase):
         self.assertEqual(motion.POLICIES, {"public-bfi-motion-1": None,
                                            "public-bfi-motion-2": motion.FRAGMENT_POLICY,
                                            "public-bfi-motion-3": motion.COUNTER_POLICY,
-                                           "public-bfi-motion-4": motion.COUNTER_POLICY})
-        self.assertIn(motion.COUNTER_POLICY, " ".join(motion.limitations("public-bfi-motion-3")))
-        self.assertIn(motion.COUNTER_POLICY, " ".join(motion.limitations("public-bfi-motion-4")))
+                                           "public-bfi-motion-4": motion.COUNTER_POLICY,
+                                           "public-bfi-motion-5": motion.COUNTER_POLICY})
+        for protocol in motion.PROTOCOLS[2:]:
+            self.assertIn(motion.COUNTER_POLICY, " ".join(motion.limitations(protocol)))
 
 
 class IntervalTests(unittest.TestCase):
@@ -524,6 +527,155 @@ class Protocol4Tests(unittest.TestCase):
         self.assertIn("ADR-429", text)
         self.assertIn("**ADMITTED**", text)
         self.assertNotIn("ADR-429", " ".join(motion.limitations(self.V3)))
+
+
+def four_group_study(scales=None, heldout_flip=False, noise=None):
+    """Two recordings per group and activity, two intervals each; moving 1.0, still 0.1, times a group scale."""
+    scales = scales or dict.fromkeys(motion.GROUPS, 1.0)
+    records, features = [], []
+    for group in motion.GROUPS:
+        for activity in motion.ACTIVITIES:
+            for participant in ("P1", "P2"):
+                records.append({"group": group, "activity": activity, "participant": participant,
+                                "path": f"{group}/{activity}_{participant}"})
+                moving = activity in motion.MOVING
+                if heldout_flip and group in motion.HELDOUT_GROUPS:
+                    moving = not moving
+                value = (1.0 if moving else 0.1) if noise is None else noise(group, activity, participant)
+                features.append([(value * scales[group], 40 * scales[group]),
+                                 (value * scales[group], 41 * scales[group])])
+    return records, features
+
+
+class Protocol5Tests(unittest.TestCase):
+    """ADR-430: session-normalized feature, fit on train + validation, held-out groups scored once."""
+
+    V5 = "public-bfi-motion-5"
+
+    def test_only_protocol_5_scores_heldout(self):
+        self.assertEqual(motion.HELDOUT_SCORED, frozenset({self.V5}))
+        self.assertEqual(motion.POLICIES[self.V5], motion.COUNTER_POLICY)
+        self.assertEqual(motion.study_activities(self.V5), tuple("ABCDEFGHIJKLMNOPQRT"))
+        self.assertEqual(motion.PRIMARY_GROUP, "heldout_same_device")
+        for protocol in motion.PROTOCOLS[:4]:
+            self.assertIn("Held-out day-5 groups were inspected for quality only and never scored.",
+                          motion.limitations(protocol))
+        text = " ".join(motion.limitations(self.V5))
+        self.assertNotIn("never scored", text)
+        self.assertIn("ADR-430", text)
+        self.assertIn("not independent", text)
+
+    def test_normalization_uses_no_labels(self):
+        records, features = four_group_study()
+        normalized, scale = motion.session_normalize(features, records)
+        relabelled = [dict(r, activity="A") for r in records]
+        again, scale_again = motion.session_normalize(features, relabelled)
+        self.assertEqual(normalized, again)
+        self.assertEqual(scale, scale_again)
+        # The scale is the plain median of every eligible interval in the group, activity S included.
+        for group in motion.GROUPS:
+            values = [m for r, f in zip(records, features) if r["group"] == group for m, _ in f]
+            self.assertAlmostEqual(scale[group]["motion"], statistics.median(values))
+            self.assertEqual(scale[group]["intervals"], 80)
+
+    def test_normalization_rejects_a_zero_scale(self):
+        records, features = four_group_study(scales={g: 0.0 if g == "validation" else 1.0 for g in motion.GROUPS})
+        with self.assertRaises(motion.DecodeError) as caught:
+            motion.session_normalize(features, records)
+        self.assertEqual(caught.exception.reason, "session_scale_not_positive:validation")
+
+    def test_a_per_session_level_shift_is_removed(self):
+        scales = {"train": 1.0, "validation": 10.0, "heldout_same_device": 3.0, "heldout_other_device_view": 0.2}
+        records, features = four_group_study(scales)
+        activities = motion.study_activities(self.V5)
+        old = motion.score(features, records, activities)
+        self.assertEqual(old["bfi_motion"]["validation_intervals"]["balanced_accuracy"], 0.5)
+        new = motion.score_heldout(features, records, activities)
+        for group in motion.HELDOUT_GROUPS:
+            self.assertEqual(new["bfi_motion"][group]["intervals"]["balanced_accuracy"], 1.0)
+            self.assertEqual(new["bfi_motion"][group]["recordings"]["balanced_accuracy"], 1.0)
+            self.assertEqual(new["bfi_motion"][group]["interval_ba_95ci"]["low"], 1.0)
+        self.assertEqual(new["bfi_motion"]["design_check"]["validation_intervals"]["balanced_accuracy"], 1.0)
+        self.assertTrue(new["better_than_chance"])
+        self.assertEqual(new["coverage"]["heldout_same_device"], {"eligible_intervals": 76, "recordings": 38})
+
+    def test_heldout_outcomes_never_reach_the_fit(self):
+        records, features = four_group_study()
+        activities = motion.study_activities(self.V5)
+        honest = motion.score_heldout(features, records, activities)
+        flipped_records, flipped = four_group_study(heldout_flip=True)
+        self.assertEqual(flipped_records, records)
+        flipped_scores = motion.score_heldout(flipped, records, activities)
+        for name in ("bfi_motion", "timing_only"):
+            self.assertEqual(honest[name]["final"], flipped_scores[name]["final"])
+            self.assertEqual(honest[name]["design_check"], flipped_scores[name]["design_check"])
+        self.assertEqual(honest["bfi_motion"]["heldout_same_device"]["intervals"]["balanced_accuracy"], 1.0)
+        self.assertLessEqual(flipped_scores["bfi_motion"]["heldout_same_device"]["intervals"]["balanced_accuracy"], 0.5)
+        self.assertFalse(flipped_scores["better_than_chance"])
+
+    def test_the_final_threshold_is_fitted_on_train_plus_validation(self):
+        # Validation alone puts the boundary higher than train alone; the final fit has to see both.
+        def noise(group, activity, participant):
+            moving = activity in motion.MOVING
+            if group == "train":
+                return 1.0 if moving else 0.1
+            if group == "validation":
+                return (1.0 if moving else 0.1) + (0.85 if participant == "P1" and not moving else 0.0)
+            return 0.5
+        records, features = four_group_study(noise=noise)
+        scores = motion.score_heldout(features, records, motion.study_activities(self.V5))
+        check, final = scores["bfi_motion"]["design_check"], scores["bfi_motion"]["final"]
+        self.assertEqual(check["train_balanced_accuracy"], 1.0)
+        self.assertLess(check["validation_intervals"]["balanced_accuracy"], 1.0)
+        self.assertNotEqual(check["threshold"], final["threshold"])
+        self.assertEqual(final["fit_balanced_accuracy"], 1.0)
+
+    def test_s_stays_out_and_chance_is_not_better_than_chance(self):
+        rng = np.random.default_rng(7)
+        records, features = four_group_study(noise=lambda *_: float(rng.uniform(0.5, 1.5)))
+        scores = motion.score_heldout(features, records, motion.study_activities(self.V5))
+        self.assertEqual(scores["scored_codes"], "ABCDEFGHIJKLMNOPQRT")
+        self.assertNotIn("S", scores["per_activity"]["heldout_same_device"])
+        ci = scores["bfi_motion"]["heldout_same_device"]["interval_ba_95ci"]
+        self.assertLessEqual(ci["low"], 0.5)
+        self.assertFalse(scores["better_than_chance"])
+
+    def test_the_bootstrap_is_deterministic_and_bounded(self):
+        rng = np.random.default_rng(3)
+        records, features = four_group_study(noise=lambda g, a, p: float(rng.uniform(0, 1)) + (a in motion.MOVING))
+        activities = motion.study_activities(self.V5)
+        first = motion.score_heldout(features, records, activities)
+        second = motion.score_heldout(features, records, activities)
+        self.assertEqual(first, second)
+        for group in motion.HELDOUT_GROUPS:
+            ci = first["bfi_motion"][group]["interval_ba_95ci"]
+            self.assertEqual((ci["resamples"], ci["seed"]), (motion.BOOTSTRAP_RESAMPLES, motion.BOOTSTRAP_SEED))
+            self.assertLessEqual(0.0, ci["low"])
+            self.assertLessEqual(ci["low"], ci["high"])
+            self.assertLessEqual(ci["high"], 1.0)
+
+    def test_the_report_states_the_primary_result_and_scope(self):
+        records = covered_records(skip={("train", "S")})
+        groups = motion.summarize(records, set(motion.GROUPS))
+        for row in groups.values():
+            row.update(packet_outcomes={}, rejected_files={})
+        study_records, features = four_group_study({"train": 1.0, "validation": 4.0,
+                                                    "heldout_same_device": 2.0, "heldout_other_device_view": 0.5})
+        report = {"protocol": self.V5, "evidence": "MEASURED", "dataset_revision": "rev",
+                  "manifest_sha256": "sha", "repository_commit": "commit", "workflow_run": "local run",
+                  "tools": {"wireshark": "TShark (Wireshark) 4.2.2."},
+                  "fragment_policy": motion.COUNTER_POLICY, "excluded_activities": ["S"],
+                  "census": {"groups": groups},
+                  "admission": motion.admission(groups, records, motion.study_activities(self.V5)),
+                  "scores": motion.score_heldout(features, study_records, motion.study_activities(self.V5)),
+                  "limitations": motion.limitations(self.V5)}
+        text = motion.markdown(report)
+        self.assertIn("## Held-out scores (scored once; ADR-430)", text)
+        self.assertIn("**Primary result: BFI motion on heldout_same_device, interval BA 1.000", text)
+        self.assertIn("Better than chance (lower bound above 0.5): YES.**", text)
+        self.assertIn("| heldout_other_device_view | 0.0500 |", text)
+        self.assertIn("Design check on seen data", text)
+        self.assertNotIn("## Scores (validation; threshold fitted on train only)", text)
 
 
 @unittest.skipUnless(WIRESHARK, "Wireshark 4.2.2 tshark/editcap not installed")

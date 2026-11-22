@@ -1,0 +1,34 @@
+name: PR title
+
+# Pull requests are squash-merged, so the title becomes the commit subject on
+# main. Check that it follows Conventional Commits: type(scope)!: summary.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  conventional-title:
+    name: Conventional Commits title
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check the title
+        env:
+          # Passed through the environment, never interpolated into the script.
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          types='feat|fix|docs|refactor|test|chore|ci|build|perf|style|revert'
+          pattern="^(${types})(\([A-Za-z0-9._/-]+\))?!?: [^ ].*[^ .]$"
+          printf 'Title: %s\n' "$TITLE"
+          if [[ ${#TITLE} -gt 100 ]]; then
+            echo "::error::The title is ${#TITLE} characters long; keep it to 100 or fewer."
+            exit 1
+          fi
+          if [[ ! "$TITLE" =~ $pattern ]]; then
+            echo "::error::Use a Conventional Commits title: type(scope): summary, for example 'fix(sensing-server): hold presence while seated'. Types: ${types//|/, }. No trailing period."
+            exit 1
+          fi
+          echo "OK"

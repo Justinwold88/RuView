@@ -38,6 +38,7 @@ docker run --rm --net=host \
 - `-e MQTT_PASSWORD` passes the password into the container; `--mqtt-password-env` only names the variable.
 - `CSI_SOURCE` sets the data source. Passing `--source esp32` after the image name also works; if both are given, the flag wins.
 - `RUVIEW_UDP_ALLOW` lets ESP32 frames in. Without it the CSI receiver stays on loopback ([ADR-296](../adr/ADR-296-sensor-data-plane-bind-hardening.md), [#2089](https://github.com/ruvnet/RuView/issues/2089)) and no node appears.
+- Plain MQTT to a broker on another host logs `MQTT: plaintext MQTT on non-localhost broker … deprecated` and then publishes normally ([ADR-115 §3.9](../adr/ADR-115-home-assistant-integration.md#39-tls--auth)). Add `--mqtt-tls` (and the broker's TLS port) to encrypt the link. Plain MQTT is only reasonable on a network you trust.
 
 **From a source checkout** (the Rust workspace lives in `v2/`; `v2/rust-toolchain.toml` pins Rust 1.89 and rustup installs it):
 
@@ -56,9 +57,9 @@ cargo run --release -p wifi-densepose-sensing-server --features mqtt -- \
 Within ~5 seconds of the first CSI frame, Home Assistant should auto-create:
 
 - One **device** per RuView node, named `RuView node <client-id>-node<N>` (see [Device identity](#device-identity))
-- **11 entities** per device by default: the raw signals and semantic primitives listed in the [Entity reference](#entity-reference)
-  - `--mqtt-publish-heart-rate` adds `heart_rate` and `possible_distress`; `--mqtt-publish-fall` adds `fall` and `fall_risk_elevated`. That makes 13 with either flag and 15 with both.
-  - `--privacy-mode` removes heart and breathing rate. That leaves 10 by default, 11 with the heart-rate flag (`possible_distress` stays, though its heart-rate input is not published), 12 with the fall flag and 13 with both.
+- **12 entities** per device by default: the raw signals and semantic primitives listed in the [Entity reference](#entity-reference)
+  - `--mqtt-publish-heart-rate` adds `heart_rate` and `possible_distress`; `--mqtt-publish-fall` adds `fall` and `fall_risk_elevated`. That makes 14 with either flag and 16 with both.
+  - `--privacy-mode` removes heart and breathing rate. That leaves 11 by default, 12 with the heart-rate flag (`possible_distress` stays, though its heart-rate input is not published), 13 with the fall flag and 14 with both.
 
 If nothing appears in HA's Settings → Devices, see [Troubleshooting](#troubleshooting).
 
@@ -474,7 +475,7 @@ The Matter Bridge can't be started from `sensing-server` yet (see the note under
 
 ## Applications — what people actually do with this
 
-The 15 entities per node (9 raw signals and 6 semantic states, see the [Entity reference](#entity-reference)) slot into Home Assistant like any other sensor. Some uses below rely on entities that are not announced yet (zones, bathroom, bed exit, meeting); those wait on a zone source or a finer motion level. The list below groups real-world uses so you can pick the ones that match your space.
+The 16 entities per node with both opt-in flags (10 raw signals and 6 semantic states, see the [Entity reference](#entity-reference)) slot into Home Assistant like any other sensor. Some uses below rely on entities that are not announced yet (zones, bathroom, bed exit, meeting); those wait on a zone source or a finer motion level. The list below groups real-world uses so you can pick the ones that match your space.
 
 ### Personal & home
 

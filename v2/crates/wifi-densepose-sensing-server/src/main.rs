@@ -15982,8 +15982,13 @@ async fn main() {
             );
             mcfg.privacy_mode = args.privacy_mode;
             let mcfg = std::sync::Arc::new(mcfg);
-            match mcfg.validate() {
-                Ok(()) => {
+            // Advisories (plaintext to a non-localhost broker, ADR-115 §3.9)
+            // warn and start; only fatal errors keep the publisher off.
+            match mcfg.check_startable() {
+                Ok(advisory) => {
+                    if let Some(advisory) = advisory {
+                        tracing::warn!("MQTT: {advisory}");
+                    }
                     let node_id = mcfg.client_id.clone();
                     let builder = mqtt::publisher::OwnedDiscoveryBuilder {
                         discovery_prefix: mcfg.discovery_prefix.clone(),

@@ -163,6 +163,18 @@ impl MqttConfig {
         }
         Ok(())
     }
+
+    /// Whether the publisher may start. `Ok(None)`: the config is clean.
+    /// `Ok(Some(advisory))`: start, but log the advisory (plaintext to a
+    /// non-localhost broker warns until v0.8.0, ADR-115 §3.9). `Err`: a fatal
+    /// problem; do not start.
+    pub fn check_startable(&self) -> Result<Option<MqttConfigError>, MqttConfigError> {
+        match self.validate() {
+            Ok(()) => Ok(None),
+            Err(e) if !e.is_fatal() => Ok(Some(e)),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 /// Read the persisted client id from `<data_dir>/mqtt_client_id`, or create
@@ -326,6 +338,29 @@ mod tests {
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, MqttConfigError::PlaintextOnPublicHost { .. }));
         assert!(!err.is_fatal(), "v0.7.0 should warn, not block (ADR-115 §3.9)");
+    }
+
+    /// Regression: the server treated every `validate()` error as fatal, so
+    /// `--mqtt --mqtt-host 192.168.1.10` (the HA guide's own command, and the
+    /// Mosquitto app on Home Assistant's network) never started the publisher.
+    #[test]
+    fn plaintext_public_broker_starts_with_an_advisory() {
+        let cfg = MqttConfig::from_args(&parse(&["--mqtt-host", "core-mosquitto"]));
+        let advisory = cfg.check_startable().expect("advisory must not block startup");
+        assert!(matches!(advisory, Some(MqttConfigError::PlaintextOnPublicHost { .. })));
+    }
+
+    #[test]
+    fn check_startable_clean_and_fatal_cases() {
+        assert!(matches!(MqttConfig::from_args(&parse(&[])).check_startable(), Ok(None)));
+        let tls = MqttConfig::from_args(&parse(&["--mqtt-host", "broker.example.com", "--mqtt-tls"]));
+        assert!(matches!(tls.check_startable(), Ok(None)));
+        let mut empty = MqttConfig::from_args(&parse(&[]));
+        empty.host = String::new();
+        assert!(matches!(empty.check_startable(), Err(MqttConfigError::EmptyHost)));
+        let mut zero = MqttConfig::from_args(&parse(&[]));
+        zero.port = 0;
+        assert!(matches!(zero.check_startable(), Err(MqttConfigError::InvalidPort(0))));
     }
 
     #[test]

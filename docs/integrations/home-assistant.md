@@ -72,7 +72,7 @@ Ctrl-C (SIGINT/SIGTERM) stops the server. It does **not** publish `offline` firs
 
 Names below are the `unique_id` slugs; Home Assistant assigns friendly names automatically. Every entity has its own availability topic (`…/<slug>/availability`, retained). An entity is `online` only while the server has a real source for it. Otherwise it is `offline`, no state is published, and Home Assistant shows **unavailable** rather than a made-up value.
 
-### Raw signals (7 entities by default; heart rate and fall are opt-in)
+### Raw signals (8 entities by default; heart rate and fall are opt-in)
 
 | HA entity | Slug | HA component | Unit | Source | Available when |
 |---|---|---|---|---|---|
@@ -82,9 +82,12 @@ Names below are the `unique_id` slugs; Home Assistant assigns friendly names aut
 | Presence score | `presence_score` | `sensor` | % | node classification confidence × 100 while present, else 0 | always |
 | Motion energy | `motion_energy` | `sensor` | (dimensionless) | `node_features[].features.motion_band_power`, else the room `features.motion_band_power` | a band-power value was seen in the last 30 s |
 | Signal strength | `rssi` | `sensor` | dBm | `nodes[].rssi_dbm` | an RSSI was seen in the last 30 s |
+| Link score | `link_score` | `sensor` (Diagnostic) | (0–100) | `node_features[].link_score`, from the node's last empty-room calibration | the node has been calibrated |
 | Heart rate | `heart_rate` | `sensor` | bpm | `vital_signs.heart_rate_bpm` (room-level) | only with `--mqtt-publish-heart-rate`; then a published estimate in the last 30 s |
 | Breathing rate | `breathing_rate` | `sensor` | bpm | `vital_signs.breathing_rate_bpm` (room-level) | a published estimate in the last 30 s |
 | Fall detected | `fall` | `event` | — | rising edge of the node's `edge_vitals.fall_detected` | only with `--mqtt-publish-fall`; then the node sent `edge_vitals` in the last 30 s |
+
+**Link score** is a diagnostic: it rates how well a node's link can sense (signal-to-noise, frame rate, frame loss and empty-room noise), not what it senses. Home Assistant lists it in the device's Diagnostic section. It stays unavailable until you run the empty-room calibration for that node (`POST /api/v1/calibration/motion/start`, plan item 1.1), and it is published in privacy mode too, because it describes the link rather than a person. Its weights are SYNTHETIC-tuned until the real-home study measures them.
 
 The server publishes heart and breathing rate only after explicit calibration, with exactly one occupant and a passing quality gate. Until then both entities stay unavailable. Heart rate and breathing rate are **biometric**: `--privacy-mode` removes them from discovery and state (see [Privacy](#privacy)).
 
@@ -124,7 +127,7 @@ These entities from ADR-115 §3.1 and §3.12 are not announced, because the sens
 | `presence` and semantic `binary_sensor`s | on change, plus a heartbeat every 60 s if unchanged | 1 / retained |
 | `person_count`, `motion_level`, `motion_energy`, `presence_score`, `fall_risk_elevated` | at most `--mqtt-rate-motion` / `--mqtt-rate-count` (default 1 Hz) | 0 / not retained |
 | `heart_rate`, `breathing_rate` | at most `--mqtt-rate-vitals` (default 0.2 Hz) | 0 / not retained |
-| `rssi` | at most `--mqtt-rate-rssi` (default 0.1 Hz) | 0 / not retained |
+| `rssi`, `link_score` | at most `--mqtt-rate-rssi` (default 0.1 Hz) | 0 / not retained |
 | `fall` | once per detected fall | 1 / not retained |
 | availability | on every transition, and all topics every 30 s | 1 / retained |
 

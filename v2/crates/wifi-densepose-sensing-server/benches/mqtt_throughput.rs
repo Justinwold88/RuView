@@ -59,6 +59,7 @@ fn snap() -> VitalsSnapshot {
         n_persons: 1,
         rssi_dbm: Some(-52.0),
         vital_confidence: 0.87,
+        link_score: Some(62),
     }
 }
 

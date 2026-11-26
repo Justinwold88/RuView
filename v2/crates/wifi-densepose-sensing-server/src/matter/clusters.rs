@@ -140,7 +140,8 @@ pub fn matter_mapping(entity: EntityKind) -> Option<MatterClusterMapping> {
             shares_occupancy_endpoint: false,
         },
         // Explicitly MQTT-only — no Matter cluster representation.
-        BreathingRate | HeartRate | MotionLevel | MotionEnergy | PresenceScore | Rssi | PoseKeypoints => return None,
+        BreathingRate | HeartRate | MotionLevel | MotionEnergy | PresenceScore | Rssi | PoseKeypoints
+        | LinkScore => return None,
     })
 }
 

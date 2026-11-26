@@ -243,6 +243,10 @@ pub struct PerNodeFeatureInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub novelty_score: Option<f32>,
     pub stale: bool,
+    /// 0–100 link score from this node's last empty-room calibration.
+    /// Absent until the node has been calibrated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_score: Option<u8>,
 }
 
 // ── ESP32 Edge Vitals Packet (ADR-039) ──────────────────────────────────────

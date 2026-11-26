@@ -141,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     n_persons: if tick % 20 < 10 { 1 } else { 0 },
                     rssi_dbm: Some(-50.0 + ((tick as f64) * 0.1).sin() * 5.0),
                     vital_confidence: 0.85,
+                    link_score: Some(70),
                 };
                 let _ = tx.send(snap);
             }

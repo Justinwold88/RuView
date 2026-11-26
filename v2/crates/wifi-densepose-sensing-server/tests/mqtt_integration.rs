@@ -337,6 +337,7 @@ async fn state_messages_published_on_snapshot_broadcast() {
                 n_persons: if i % 2 == 0 { 1 } else { 0 },
                 rssi_dbm: Some(-48.0),
                 vital_confidence: 0.9,
+                link_score: None,
             });
             tokio::time::sleep(Duration::from_millis(300)).await;
         }

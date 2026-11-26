@@ -71,6 +71,10 @@ pub struct DiscoveryConfig {
     pub json_attributes_topic: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_types: Option<Vec<String>>,
+    /// `diagnostic` puts the entity in the device's Diagnostic section in
+    /// Home Assistant instead of its main controls and sensors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_category: Option<String>,
     pub qos: u8,
     pub device: DeviceMeta,
     pub origin: OriginMeta,
@@ -145,6 +149,10 @@ pub enum EntityKind {
     BedExit,
     NoMovement,
     MultiRoomTransition,
+    /// 0–100 link score from the node's last empty-room calibration
+    /// (plan item 1.1, `motion_calibration.rs`). Diagnostic, not a sensing
+    /// output: it says how well this link can sense, not what it senses.
+    LinkScore,
 }
 
 impl EntityKind {
@@ -171,6 +179,7 @@ impl EntityKind {
             EntityKind::BedExit => "bed_exit",
             EntityKind::NoMovement => "no_movement",
             EntityKind::MultiRoomTransition => "multi_room_transition",
+            EntityKind::LinkScore => "link_score",
         }
     }
 
@@ -199,7 +208,8 @@ impl EntityKind {
             | EntityKind::PresenceScore
             | EntityKind::Rssi
             | EntityKind::PoseKeypoints
-            | EntityKind::FallRiskElevated => DiscoveryComponent::Sensor,
+            | EntityKind::FallRiskElevated
+            | EntityKind::LinkScore => DiscoveryComponent::Sensor,
         }
     }
 
@@ -279,6 +289,7 @@ impl EntityKind {
             EntityKind::BedExit => "Bed exit",
             EntityKind::NoMovement => "No movement",
             EntityKind::MultiRoomTransition => "Room transition",
+            EntityKind::LinkScore => "Link score",
         }
     }
 }
@@ -371,6 +382,7 @@ impl<'a> DiscoveryBuilder<'a> {
             value_template: None,
             json_attributes_topic: None,
             event_types: None,
+            entity_category: None,
             qos: match component {
                 DiscoveryComponent::BinarySensor | DiscoveryComponent::Event => 1,
                 DiscoveryComponent::Sensor => 0,
@@ -473,6 +485,13 @@ impl<'a> DiscoveryBuilder<'a> {
                 cfg.icon = Some("mdi:human-fall".into());
                 cfg.value_template = Some("{{ value_json.score }}".into());
             }
+            EntityKind::LinkScore => {
+                // Unitless 0–100 score.
+                cfg.state_class = Some("measurement".into());
+                cfg.icon = Some("mdi:wifi-check".into());
+                cfg.value_template = Some("{{ value_json.score }}".into());
+                cfg.entity_category = Some("diagnostic".into());
+            }
         }
 
         cfg
@@ -510,6 +529,7 @@ impl<'a> DiscoveryBuilder<'a> {
             EntityKind::BedExit,
             EntityKind::NoMovement,
             EntityKind::MultiRoomTransition,
+            EntityKind::LinkScore,
         ];
 
         all.into_iter()
@@ -618,6 +638,35 @@ mod tests {
     }
 
     #[test]
+    fn link_score_is_a_diagnostic_sensor() {
+        let b = builder();
+        let j: Value = serde_json::to_value(b.build(EntityKind::LinkScore)).unwrap();
+        assert_eq!(j["name"], "Link score");
+        assert_eq!(j["entity_category"], "diagnostic");
+        assert_eq!(j["state_class"], "measurement");
+        assert_eq!(j["value_template"], "{{ value_json.score }}");
+        assert_eq!(
+            j["state_topic"],
+            "homeassistant/sensor/wifi_densepose_aabbccddeeff/link_score/state"
+        );
+        assert!(j.get("unit_of_measurement").is_none());
+        assert!(j.get("device_class").is_none());
+        // No other entity is diagnostic, so the field stays off their payloads.
+        let presence: Value = serde_json::to_value(b.build(EntityKind::Presence)).unwrap();
+        assert!(presence.get("entity_category").is_none());
+    }
+
+    #[test]
+    fn link_score_is_announced_in_every_mode() {
+        for privacy in [false, true] {
+            let entities = DiscoveryBuilder::enabled_entities(privacy, false, false, false, &[]);
+            assert!(entities.contains(&EntityKind::LinkScore), "privacy={privacy}");
+        }
+        assert!(!EntityKind::LinkScore.is_biometric());
+        assert!(crate::matter::matter_mapping(EntityKind::LinkScore).is_none());
+    }
+
+    #[test]
     fn semantic_primitive_uses_problem_class_for_distress() {
         let b = builder();
         let cfg = b.build(EntityKind::PossibleDistress);
@@ -634,7 +683,7 @@ mod tests {
         assert!(entities.contains(&EntityKind::Presence));
         assert!(entities.contains(&EntityKind::HeartRate));
         assert!(entities.contains(&EntityKind::SomeoneSleeping));
-        assert_eq!(entities.len(), 15);
+        assert_eq!(entities.len(), 16);
     }
 
     #[test]
@@ -644,7 +693,7 @@ mod tests {
         assert!(!default.contains(&EntityKind::PossibleDistress));
         assert!(default.contains(&EntityKind::BreathingRate));
         assert!(default.contains(&EntityKind::SomeoneSleeping));
-        assert_eq!(default.len(), 13);
+        assert_eq!(default.len(), 14);
 
         let opted_in = DiscoveryBuilder::enabled_entities(false, false, true, true, &[]);
         assert!(opted_in.contains(&EntityKind::HeartRate));
@@ -662,12 +711,12 @@ mod tests {
         assert!(!default.contains(&EntityKind::FallRiskElevated));
         assert!(default.contains(&EntityKind::Presence));
         assert!(default.contains(&EntityKind::NoMovement));
-        assert_eq!(default.len(), 11);
+        assert_eq!(default.len(), 12);
 
         let opted_in = DiscoveryBuilder::enabled_entities(false, false, false, true, &[]);
         assert!(opted_in.contains(&EntityKind::FallDetected));
         assert!(opted_in.contains(&EntityKind::FallRiskElevated));
-        assert_eq!(opted_in.len(), 13);
+        assert_eq!(opted_in.len(), 14);
     }
 
     #[test]

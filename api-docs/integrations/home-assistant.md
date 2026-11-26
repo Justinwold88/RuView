@@ -230,6 +230,12 @@ Restart Home Assistant, or reload template entities.
 **2. Show it to Alexa.**
 - **With Home Assistant Cloud:** expose the new sensor to Alexa in Home Assistant's voice-assistant settings, and leave state reporting on. Routines need Home Assistant to report changes to Alexa (proactive events).
 - **With your own Alexa skill** ([`alexa.smart_home`](https://www.home-assistant.io/integrations/alexa.smart_home/)): include the sensor in the `filter`, and turn on "Send Alexa Events" in the skill.
+- **Over Matter, with no subscription or skill:** if your Echo is a Matter controller (check Amazon's list of Matter-capable Echo devices), [Home-Assistant-Matter-Hub](https://riddix.github.io/home-assistant-matter-hub/) can publish the sensor to it over your local network. It is a community project (the RiDDiX fork; the original stopped in January 2026), not part of RuView or Home Assistant, and it has not been tested with RuView.
+  - It maps a `motion` binary sensor to a Matter occupancy sensor (PIR type), so expose the sensor from step 1.
+  - Its add-on runs only on Home Assistant OS. On a Windows PC that means Home Assistant OS in a virtual machine ([Home Assistant's Windows guide](https://www.home-assistant.io/installation/windows/): VirtualBox, or Hyper-V on Windows Pro with a bridged virtual switch). Docker and npm installs exist too and need host networking.
+  - Matter needs IPv6 and mDNS working on your local network.
+  - Commission the bridge from the Alexa app with the pairing code the add-on shows. Then step 3 works the same way.
+  - Until RuView's own Matter bridge ships (ADR-115), this is the only route that needs neither Home Assistant Cloud nor an Alexa skill.
 
 **3. Use it in a routine.** In the Alexa app, discover devices. The sensor appears as a motion sensor. Create a routine: **When this happens → Smart Home →** the sensor **→ Detects motion** (or **No motion** for when the room empties).
 

@@ -119,10 +119,13 @@ in the [decode audit](../../tools/bfi_learning/PUBLIC-BFI-DECODE.md) and
   nonzero fragment bits, only in protocol `public-bfi-motion-2`. The live guards are unchanged.
 - Amended by [ADR-428](ADR-428-csi-bfi-har-sequence-control-counter-policy.md): the named
   dataset policy `csi-bfi-har-seqctl-counter-v1` reads the whole Sequence Control field as
-  one 16-bit counter, in protocols `public-bfi-motion-3` and `-4`. The live guards are unchanged.
+  one 16-bit counter, in protocols `public-bfi-motion-3`, `-4` and `-5`. The live guards are unchanged.
 - Amended by [ADR-429](ADR-429-csi-bfi-har-protocol-4-without-activity-s.md): protocol
   `public-bfi-motion-4` leaves activity S out of benchmark admission and scoring, explicitly
   and reported. The A–T rule still governs every other protocol.
+- Amended by [ADR-430](ADR-430-csi-bfi-har-protocol-5-session-normalized-heldout-score.md):
+  protocol `public-bfi-motion-5` normalizes the feature per session without labels, fits on
+  train + validation, and scores the held-out groups once, with a pre-stated decision rule.
 - Depends on [ADR-364](ADR-364-bfi-capture-admission-and-continuity.md)'s distinction
   between packet validity and coverage.
 - Preserves [ADR-120](ADR-120-bfld-privacy-class-and-hash-rotation.md).

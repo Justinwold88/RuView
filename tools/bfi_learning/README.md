@@ -155,7 +155,7 @@ for training. See `RESEARCH-NEXT.md` for the activity labels and quality rules.
 
 [PUBLIC-BFI-MOTION.md](PUBLIC-BFI-MOTION.md) freezes a moving-versus-still test
 on the pinned public captures, following ADR-365 strictly. The census covers
-all four partition/view groups; held-out groups are never scored.
+all four partition/view groups; versions 1–4 never score the held-out groups.
 [public_bfi_motion.py](public_bfi_motion.py) needs Wireshark 4.2.2 (`tshark`,
 `editcap`) and runs in the manual `public-bfi-motion.yml` workflow. Only
 aggregate numbers leave the runner. Protocol version 2
@@ -166,7 +166,10 @@ reproducible. Version 3 ([PUBLIC-BFI-MOTION-3.md](PUBLIC-BFI-MOTION-3.md))
 replaces that with the ADR-428 Sequence Control counter policy. Version 4
 ([PUBLIC-BFI-MOTION-4.md](PUBLIC-BFI-MOTION-4.md)) keeps the ADR-428 policy
 and leaves activity S out of admission and scoring (ADR-429), because train S
-has no eligible interval.
+has no eligible interval. Version 5
+([PUBLIC-BFI-MOTION-5.md](PUBLIC-BFI-MOTION-5.md), ADR-430) rescales each
+session by its own label-free median, fits on train + validation, and scores
+the held-out groups once; it is the only version that scores them.
 
 ```bash
 python tools/bfi_learning/download_public_bfi.py --include-heldout --output /private/bfi

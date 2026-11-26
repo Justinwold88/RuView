@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Public BFI motion test, protocols public-bfi-motion-1 to -4 (PUBLIC-BFI-MOTION*.md).
+"""Public BFI motion test, protocols public-bfi-motion-1 to -5 (PUBLIC-BFI-MOTION*.md).
 
 Offline and bounded. Reads a private download made by download_public_bfi.py and
 runs the ADR-365 quality census on all four partition/view groups. Checks the
-body decoder against tshark 4.2.2. Only if the benchmark is admitted, fits a
-one-feature threshold on train and scores it on validation. Held-out groups are
-inspected for quality only and are never scored.
+body decoder against tshark 4.2.2. Only if the benchmark is admitted, scores a
+one-feature threshold. Protocols 1-4 fit on train, score validation and only
+inspect held-out quality. Protocol 5 (ADR-430) normalizes each group by its own
+label-free median, fits on train + validation and scores the held-out groups once.
 
 The report holds aggregate numbers only: no addresses, angles or packet bytes.
 """
@@ -38,13 +39,15 @@ import download_public_bfi as download  # noqa: E402
 import public_bfi_decode  # noqa: E402
 
 PROTOCOL = "public-bfi-motion-1"
-PROTOCOLS = ("public-bfi-motion-1", "public-bfi-motion-2", "public-bfi-motion-3", "public-bfi-motion-4")
+PROTOCOLS = ("public-bfi-motion-1", "public-bfi-motion-2", "public-bfi-motion-3", "public-bfi-motion-4",
+             "public-bfi-motion-5")
 # ADR-427: the only route by which a nonzero fragment number is admitted in protocol 2.
 FRAGMENT_POLICY = "csi-bfi-har-complete-mpdu-v1"
 # ADR-428: the route in protocol 3, which reads all 16 Sequence Control bits as one counter.
 COUNTER_POLICY = "csi-bfi-har-seqctl-counter-v1"
 POLICIES = {"public-bfi-motion-1": None, "public-bfi-motion-2": FRAGMENT_POLICY,
-            "public-bfi-motion-3": COUNTER_POLICY, "public-bfi-motion-4": COUNTER_POLICY}
+            "public-bfi-motion-3": COUNTER_POLICY, "public-bfi-motion-4": COUNTER_POLICY,
+            "public-bfi-motion-5": COUNTER_POLICY}
 SIBLING_WINDOW_NS = 1_000_000_000
 DUPLICATE_WINDOW_NS = 1_000_000_000
 WIRESHARK_VERSION = "4.2.2"
@@ -65,9 +68,15 @@ ACTIVITIES = tuple("ABCDEFGHIJKLMNOPQRST")
 MOVING = frozenset("ABCDGKLOQ")
 # ADR-429: protocol 4 leaves activity S out of benchmark admission and scoring. Its files
 # still go through the whole quality census and the decoder oracle.
-EXCLUDED_ACTIVITIES = {"public-bfi-motion-4": frozenset("S")}
+EXCLUDED_ACTIVITIES = {"public-bfi-motion-4": frozenset("S"), "public-bfi-motion-5": frozenset("S")}
 GROUPS = download.SPLITS
 FIT_GROUP, SCORE_GROUP = "train", "validation"
+HELDOUT_GROUPS = ("heldout_same_device", "heldout_other_device_view")
+# ADR-430: protocol 5 scores the held-out groups, once, with a session-normalized feature.
+HELDOUT_SCORED = frozenset({"public-bfi-motion-5"})
+PRIMARY_GROUP = "heldout_same_device"
+BOOTSTRAP_RESAMPLES = 2000
+BOOTSTRAP_SEED = 20261122
 SHB, IDB, OPB, SPB, EPB = 0x0A0D0D0A, 1, 2, 3, 6
 FC_GUARDS = 0xC700  # ToDS, FromDS, More Fragments, Protected, Order
 FC_MORE_FRAGMENTS = 0x0400
@@ -90,6 +99,7 @@ BODY_ERRORS = {"expected exactly 1003 bytes of action body": "rejected_body_leng
 require = decoder.require
 DecodeError = decoder.DecodeError
 assert MOVING < frozenset(ACTIVITIES)
+assert set(HELDOUT_GROUPS) | {FIT_GROUP, SCORE_GROUP} == set(GROUPS) and PRIMARY_GROUP in HELDOUT_GROUPS
 assert all(e <= frozenset(ACTIVITIES) - MOVING for e in EXCLUDED_ACTIVITIES.values())
 
 
@@ -683,6 +693,117 @@ def score(features_by_file, records, activities=ACTIVITIES):
     return result
 
 
+def session_normalize(features_by_file, records):
+    """Divide every interval's values by its group's median over all eligible intervals.
+
+    No labels are used: the median covers every eligible interval in the group, of every
+    activity, so a held-out session is scaled by its own data alone (ADR-430)."""
+    by_group = collections.defaultdict(list)
+    for record, features in zip(records, features_by_file):
+        by_group[record["group"]].extend(features)
+    scale = {}
+    for group, values in by_group.items():
+        if not values:
+            continue
+        motion = statistics.median(m for m, _ in values)
+        reports = statistics.median(t for _, t in values)
+        require(motion > 0 and reports > 0, f"session_scale_not_positive:{group}")
+        scale[group] = {"motion": motion, "reports_per_interval": reports, "intervals": len(values)}
+    normalized = [[(m / scale[record["group"]]["motion"], t / scale[record["group"]]["reports_per_interval"])
+                   for m, t in features]
+                  for record, features in zip(records, features_by_file)]
+    return normalized, scale
+
+
+def recording_confusion(rows, column, threshold, direction):
+    """Each recording's median value against the threshold."""
+    recordings = collections.defaultdict(list)
+    for record, *values in rows:
+        recordings[record["path"]].append((record["activity"], values[column - 1]))
+    names = sorted(recordings)
+    values = [statistics.median(v for _, v in recordings[n]) for n in names]
+    labels = [recordings[n][0][0] in MOVING for n in names]
+    return confusion(predict(values, threshold, direction), labels)
+
+
+def bootstrap_interval_ba(rows, column, threshold, direction,
+                          resamples=BOOTSTRAP_RESAMPLES, seed=BOOTSTRAP_SEED):
+    """95% interval for interval-level balanced accuracy.
+
+    Recordings are resampled with replacement within each class, because intervals from one
+    recording are not independent."""
+    correct = collections.defaultdict(lambda: [0, 0])
+    moving_of = {}
+    for record, *values in rows:
+        is_moving = record["activity"] in MOVING
+        hit = bool(predict([values[column - 1]], threshold, direction)[0]) == is_moving
+        correct[record["path"]][0] += int(hit)
+        correct[record["path"]][1] += 1
+        moving_of[record["path"]] = is_moving
+    names = sorted(correct)
+    hits = np.array([correct[n][0] for n in names], dtype=np.float64)
+    totals = np.array([correct[n][1] for n in names], dtype=np.float64)
+    moving = np.array([moving_of[n] for n in names])
+    require(moving.any() and (~moving).any(), "both_groups_required")
+    rng = np.random.default_rng(seed)
+    rates = []
+    for members in (np.flatnonzero(moving), np.flatnonzero(~moving)):
+        chosen = members[rng.integers(0, members.size, size=(resamples, members.size))]
+        rates.append(hits[chosen].sum(axis=1) / totals[chosen].sum(axis=1))
+    low, high = np.percentile(0.5 * (rates[0] + rates[1]), [2.5, 97.5])
+    return {"low": float(low), "high": float(high), "resamples": resamples, "seed": seed}
+
+
+def score_heldout(features_by_file, records, activities):
+    """Protocol 5 (ADR-430): session-normalized features; fit on train + validation, score held-out once."""
+    normalized, scale = session_normalize(features_by_file, records)
+    groups = (FIT_GROUP, SCORE_GROUP) + HELDOUT_GROUPS
+    rows = {group: [] for group in groups}
+    for record, features in zip(records, normalized):
+        if record["group"] in rows and record["activity"] in activities:
+            for motion, timing in features:
+                rows[record["group"]].append((record, motion, timing))
+    labels = {g: [r["activity"] in MOVING for r, _, _ in rows[g]] for g in rows}
+    fit_rows = rows[FIT_GROUP] + rows[SCORE_GROUP]
+    fit_labels = labels[FIT_GROUP] + labels[SCORE_GROUP]
+    result = {"positive_class": "moving", "moving_codes": "".join(sorted(MOVING)),
+              "scored_codes": "".join(activities), "primary": f"{PRIMARY_GROUP} interval balanced accuracy",
+              "normalization": "each group's median over all of its eligible intervals, no labels used",
+              "session_scale": scale}
+    for name, column in (("bfi_motion", 1), ("timing_only", 2)):
+        check = fit_threshold([row[column] for row in rows[FIT_GROUP]], labels[FIT_GROUP])
+        check["validation_intervals"] = confusion(
+            predict([row[column] for row in rows[SCORE_GROUP]], check["threshold"], check["direction"]),
+            labels[SCORE_GROUP])
+        final = fit_threshold([row[column] for row in fit_rows], fit_labels)
+        entry = {"design_check": check,
+                 "final": {"threshold": final["threshold"], "direction": final["direction"],
+                           "fit_balanced_accuracy": final["train_balanced_accuracy"]}}
+        for group in HELDOUT_GROUPS:
+            values = [row[column] for row in rows[group]]
+            entry[group] = {
+                "intervals": confusion(predict(values, final["threshold"], final["direction"]), labels[group]),
+                "recordings": recording_confusion(rows[group], column, final["threshold"], final["direction"]),
+                "interval_ba_95ci": bootstrap_interval_ba(rows[group], column, final["threshold"],
+                                                          final["direction"])}
+        result[name] = entry
+    majority = sum(fit_labels) * 2 > len(fit_labels)
+    result["constant_class"] = {"predicts": "moving" if majority else "still",
+                                **{g: confusion([majority] * len(labels[g]), labels[g]) for g in HELDOUT_GROUPS}}
+    primary = result["bfi_motion"][PRIMARY_GROUP]["interval_ba_95ci"]
+    result["better_than_chance"] = primary["low"] > 0.5
+    result["per_activity"] = {
+        group: {activity: {"group": "moving" if activity in MOVING else "still",
+                           "intervals": len(values),
+                           "median_normalized_motion": statistics.median(values) if values else None}
+                for activity in activities
+                for values in [[m for r, m, _ in rows[group] if r["activity"] == activity]]}
+        for group in groups}
+    result["coverage"] = {g: {"eligible_intervals": len(rows[g]),
+                              "recordings": len({r["path"] for r, _, _ in rows[g]})} for g in rows}
+    return result
+
+
 # ---------------------------------------------------------------- reporting
 
 def markdown(report):
@@ -739,7 +860,9 @@ def markdown(report):
                      "recordings with an eligible interval (see the coverage table).")
         lines.append("")
     scores = report["scores"]
-    if scores:
+    if scores and "normalization" in scores:
+        lines += heldout_markdown(scores)
+    elif scores:
         lines += ["## Scores (validation; threshold fitted on train only)", "",
                   "| Detector | Threshold | Train BA | Validation interval BA | TP/FN/TN/FP | Validation recording BA | TP/FN/TN/FP |",
                   "|---|---|---|---|---|---|---|"]
@@ -765,6 +888,57 @@ def markdown(report):
     return "\n".join(lines)
 
 
+def heldout_markdown(scores):
+    """Report section for protocol 5 (ADR-430)."""
+    fmt = lambda x: "—" if x is None else f"{x:.3f}"  # noqa: E731
+    cell = lambda c: f"{c['balanced_accuracy']:.3f} ({c['tp']}/{c['fn']}/{c['tn']}/{c['fp']})"  # noqa: E731
+    m = scores["bfi_motion"][PRIMARY_GROUP]["interval_ba_95ci"]
+    lines = ["## Held-out scores (scored once; ADR-430)", "",
+             "Each feature is divided by its group's median over all of that group's eligible intervals, "
+             "every activity included, so no labels are used. "
+             "Thresholds are fitted on train + validation and scored on each held-out view. "
+             "BA cells show balanced accuracy (TP/FN/TN/FP), moving as the positive class. The 95% intervals "
+             f"resample recordings within each class ({m['resamples']} resamples, seed {m['seed']}).", "",
+             f"**Primary result: BFI motion on {PRIMARY_GROUP}, interval BA {scores['bfi_motion'][PRIMARY_GROUP]['intervals']['balanced_accuracy']:.3f}, "
+             f"95% interval {m['low']:.3f}–{m['high']:.3f}. Better than chance (lower bound above 0.5): "
+             f"{'YES' if scores['better_than_chance'] else 'NO'}.**", "",
+             "| Detector | Threshold | Fit BA (train + validation) | " + " | ".join(
+                 f"{g} intervals | 95% interval | {g} recordings" for g in HELDOUT_GROUPS) + " |",
+             "|---|---|---|" + "---|---|---|" * len(HELDOUT_GROUPS)]
+    for name in ("bfi_motion", "timing_only"):
+        s = scores[name]
+        row = f"| {name} | {s['final']['direction']} {s['final']['threshold']:.6g} | {s['final']['fit_balanced_accuracy']:.3f} |"
+        for g in HELDOUT_GROUPS:
+            ci = s[g]["interval_ba_95ci"]
+            row += f" {cell(s[g]['intervals'])} | {ci['low']:.3f}–{ci['high']:.3f} | {cell(s[g]['recordings'])} |"
+        lines.append(row)
+    c = scores["constant_class"]
+    lines.append(f"| constant ({c['predicts']}) | | |" + "".join(f" {cell(c[g])} | | |" for g in HELDOUT_GROUPS))
+    lines += ["", "Design check on seen data (threshold fitted on train only, scored on validation; not used for any choice):", "",
+              "| Detector | Threshold | Train BA | Validation interval BA |", "|---|---|---|---|"]
+    for name in ("bfi_motion", "timing_only"):
+        d = scores[name]["design_check"]
+        lines.append(f"| {name} | {d['direction']} {d['threshold']:.6g} | {d['train_balanced_accuracy']:.3f} | "
+                     f"{cell(d['validation_intervals'])} |")
+    groups = list(scores["per_activity"])
+    lines += ["", "Session scales (median raw motion feature in radians, median reports per interval):", "",
+              "| Group | Motion scale | Reports scale | Intervals |", "|---|---|---|---|"]
+    for g in groups:
+        sc = scores["session_scale"].get(g)
+        if sc:
+            lines.append(f"| {g} | {sc['motion']:.4f} | {sc['reports_per_interval']:.1f} | {sc['intervals']} |")
+    lines += ["", "Per-activity median normalized motion and eligible intervals:", "",
+              "| Activity | Group | " + " | ".join(f"{g} median | n" for g in groups) + " |",
+              "|---|---|" + "---|---|" * len(groups)]
+    for activity, first in scores["per_activity"][groups[0]].items():
+        lines.append(f"| {activity} | {first['group']} | " + " | ".join(
+            f"{fmt(scores['per_activity'][g][activity]['median_normalized_motion'])} | "
+            f"{scores['per_activity'][g][activity]['intervals']}" for g in groups) + " |")
+    return lines + [""]
+
+
+HELDOUT_LIMITATION = ("The held-out day-5 groups are scored once, by this protocol (ADR-430), and nothing in it was "
+                      "chosen from their outcomes. Any later score on them is no longer a held-out result.")
 LIMITATIONS = [
     "Every recording has a person present, so presence detection is not tested.",
     "Moving/still grouping of author activity codes is a frozen judgement call; per-activity numbers allow regrouping.",
@@ -789,9 +963,24 @@ def limitations(protocol):
                       "to versions 1 or 2.",
         PROTOCOLS[3]: f"Nonzero-fragment frames are admitted only under the named policy {COUNTER_POLICY} "
                       "(ADR-428), as in version 3.",
+        PROTOCOLS[4]: f"Nonzero-fragment frames are admitted only under the named policy {COUNTER_POLICY} "
+                      "(ADR-428), as in versions 3 and 4.",
     }[protocol]
     items = [fragment if item == "FRAGMENT_LIMITATION" else item for item in LIMITATIONS]
-    if protocol in EXCLUDED_ACTIVITIES:
+    if protocol in HELDOUT_SCORED:
+        items = [HELDOUT_LIMITATION if item == LIMITATIONS[3] else item for item in items]
+        items.append("Features are normalized by each group's own median over all eligible intervals, without "
+                     "labels. That assumes every session covers a similar mix of activities, as this dataset's "
+                     "design does; a home with a different mix would shift the scale.")
+        items.append("The two held-out views record the same events with different devices, so they are not "
+                     "independent results. The primary result is the same-device view.")
+        items.append("The 95% interval resamples recordings and treats them as independent. Recordings by the "
+                     "same participant are not, and there are only three participants, so the interval may be "
+                     "too narrow.")
+        items.append("Activity S is left out of admission and scoring (ADR-429, extended to version 5 by ADR-430), "
+                     f"so the task is {len(study_activities(protocol))} activities, not A-T. Not comparable to "
+                     "versions 1 to 4, or to any A-T result.")
+    elif protocol in EXCLUDED_ACTIVITIES:
         codes = ", ".join(sorted(EXCLUDED_ACTIVITIES[protocol]))
         items.append(f"Activity {codes} is left out of benchmark admission and scoring (ADR-429), so the task is "
                      f"{len(study_activities(protocol))} activities, not A-T. The exclusion was decided from "
@@ -826,7 +1015,8 @@ def run(root, tools, commit, run_url, log=print, protocol=PROTOCOL):
     activities = study_activities(protocol)
     groups = summarize(records, downloaded_groups)
     gate = admission(groups, records, activities)
-    scores = score(features, records, activities) if gate["admitted"] else None
+    scorer = score_heldout if protocol in HELDOUT_SCORED else score
+    scores = scorer(features, records, activities) if gate["admitted"] else None
     if policy:
         policy_compared = sum(r.get("oracle", {}).get("policy_compared", 0) for r in records)
         gate["oracle"]["policy_reports_compared"] = policy_compared
@@ -860,7 +1050,9 @@ def main(argv=None):
     parser.add_argument("--protocol", choices=PROTOCOLS, default=PROTOCOL,
                         help="public-bfi-motion-2 adds the ADR-427 fragment policy; "
                              "public-bfi-motion-3 the ADR-428 Sequence Control counter policy; "
-                             "public-bfi-motion-4 that policy with activity S left out (ADR-429)")
+                             "public-bfi-motion-4 that policy with activity S left out (ADR-429); "
+                             "public-bfi-motion-5 adds session normalization and scores the held-out "
+                             "groups once (ADR-430)")
     args = parser.parse_args(argv)
     try:
         tools = {name: shutil.which(getattr(args, name)) for name in ("tshark", "editcap")}

@@ -169,7 +169,9 @@ and leaves activity S out of admission and scoring (ADR-429), because train S
 has no eligible interval. Version 5
 ([PUBLIC-BFI-MOTION-5.md](PUBLIC-BFI-MOTION-5.md), ADR-430) rescales each
 session by its own label-free median, fits on train + validation, and scores
-the held-out groups once; it is the only version that scores them.
+the held-out groups once; it is the only version that scores them. Its run
+found the feature no better than chance on held-out data (balanced accuracy
+0.479, 95% interval 0.376–0.578), which closes this study on this dataset.
 
 ```bash
 python tools/bfi_learning/download_public_bfi.py --include-heldout --output /private/bfi

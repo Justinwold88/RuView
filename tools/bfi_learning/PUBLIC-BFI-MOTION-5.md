@@ -133,4 +133,82 @@ python tools/bfi_learning/public_bfi_motion.py --protocol public-bfi-motion-5 \
 
 ## Results
 
-Not yet run.
+**Run 1 (2026-11-26 UTC): benchmark ADMITTED. On held-out data the BFI
+motion feature is NOT better than chance.** MEASURED on public data, under the
+policy `csi-bfi-har-seqctl-counter-v1` with activity S left out (ADR-429) and
+the ADR-430 session normalization. Not comparable to versions 1–4 or to any
+A–T result.
+- Workflow run [45732394943](https://github.com/Justinwold88/RuView/actions/runs/45732394943), commit `f7c705f3`.
+- Dataset revision `c3013b3e…`, manifest SHA-256 `c2db11f7…`, Wireshark 4.2.2.
+
+**Census, oracle and admission: the same as version 4.**
+- All 240 files were admitted, with no repeated 16-bit Sequence Control value
+  within 1 s.
+- The decoder oracle matched 1,872 reports with tshark 4.2.2; 960 of them were
+  admitted under the policy.
+- Recordings with an eligible interval: train 57 of 60, validation 41 of 60,
+  held-out 60 of 60 in each view.
+- All 19 activities have at least 2 recordings with an eligible interval in
+  all four groups.
+
+**Primary result: BFI motion on `heldout_same_device`, interval balanced
+accuracy 0.479, 95% interval 0.376–0.578. Better than chance: NO.**
+
+Thresholds were fitted on normalized train + validation and scored once on
+each held-out view, with moving as the positive class. Cells show balanced
+accuracy (TP/FN/TN/FP):
+
+| Detector | Threshold (normalized) | Fit BA | Same device, intervals | 95% interval | Same device, recordings | Other view, intervals | 95% interval | Other view, recordings |
+|---|---|---|---|---|---|---|---|---|
+| BFI motion feature | greater than 1.020 × session median | 0.594 | **0.479** (688/942/959/831) | **0.376–0.578** | 0.470 (11/16/16/14) | 0.584 (984/665/1040/782) | 0.474–0.691 | 0.596 (16/11/18/12) |
+| Timing-only control | fewer than 0.708 × session median reports | 0.526 | 0.520 (237/1393/1603/187) | 0.474–0.568 | 0.519 (1/26/30/0) | 0.508 (177/1472/1654/168) | 0.470–0.546 | 0.519 (1/26/30/0) |
+| Constant class (still) | | | 0.500 (0/1630/1790/0) | | | 0.500 (0/1649/1822/0) | | |
+
+- The same-device view scored 3,420 intervals (1,630 moving, 1,790 still)
+  from 57 recordings. The other view scored 3,471 intervals from the same 57
+  events.
+- The other view's 0.584 is a secondary result, and its interval also
+  includes 0.5. It records the same events, so it is not a second test.
+- Design check, which played no part in any choice (fitted on normalized
+  train, scored on normalized validation): BFI motion 0.522, timing-only
+  0.496. Without normalization, version 4 scored 0.500 there.
+
+**Session scales** (median raw motion feature, median reports per interval):
+
+| Group | Motion scale (rad) | Reports scale |
+|---|---|---|
+| train (kitchen, day 1) | 0.0288 | 118 |
+| validation (classroom, day 3) | 0.1012 | 159 |
+| held-out, same device (living room, day 5) | 0.1080 | 258 |
+| held-out, other view (same events) | 0.0376 | 265 |
+
+**What happened.**
+- **Normalization removed the level shift, and little signal was left.** In
+  validation and the same-device held-out view, every activity's normalized
+  median except two sits between 0.92 and 1.13 times its session median,
+  moving and still alike.
+- **The two exceptions are jogging (A, moving) and reading a book (J, still).**
+  J's median is in the top two of all 19 activities in every group, and the
+  highest in both held-out views (1.635 and 2.921). Whatever the feature
+  responds to, reading shares it with jogging. This dataset can't say why.
+- **The device view moves the level as much as room and day do.** The two
+  held-out views record the same events, yet their motion scales differ by a
+  factor of about 2.9.
+- **Even the fit was weak.** Balanced accuracy on train + validation was only
+  0.594, before any held-out data was touched.
+
+**Answer to the question.** On this public data, the one-feature BFI motion
+statistic does not tell sustained large motion from fine-motor or still
+activity in a room and day that played no part in any choice, even after each
+session is rescaled by its own median. Its same-device held-out score, 0.479,
+is no better than always predicting one class, and the timing-only control
+does no better.
+
+This closes plan item 1.6 on this dataset with a null result.
+- The held-out groups have now been scored. Any later study on them is
+  exploratory, and its numbers are not held-out results (ADR-430).
+- Regrouping activities (for example, moving J to "moving") would be chosen
+  after seeing held-out numbers, so it can't be tested here.
+- A different feature or model would need new held-out data, such as the
+  consented real-home recordings in Phase 2.
+- Nothing in RuView's live path depends on this result.

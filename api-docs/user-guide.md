@@ -997,12 +997,9 @@ Full design + operator guide: [`docs/integrations/home-assistant.md`](integratio
 
 1. Inside Home Assistant, install the **Mosquitto broker** add-on from the Add-on Store and start it.
 2. In HA, **Settings → Devices & Services → Add Integration → MQTT**, point at the broker.
-3. Start the sensing-server with MQTT:
-
-   ```bash
-   docker run --rm --net=host ruvnet/wifi-densepose:0.7.0 \
-       --source esp32 --mqtt --mqtt-host <ha-host-ip>
-   ```
+3. Start the sensing-server with MQTT.
+   - On Home Assistant OS, install the [RuView app](https://github.com/Justinwold88/ruview-ha-addon) (experimental). It finds the Mosquitto broker and starts the server with safe defaults.
+   - Elsewhere, use the Docker command in the [Home Assistant guide](integrations/home-assistant.md#2-start-the-publisher). It includes the API token and UDP allow-list that the image needs: without a token it refuses to start (#864), and without an allow-list it hears no nodes (ADR-296).
 4. Within ~5 seconds HA auto-creates one **device** per RuView node. By default it has 12 entities: raw signals such as presence, person count, breathing rate, motion, RSSI and the link score (a diagnostic), plus semantic primitives such as someone-sleeping, room-active and no-movement. Heart rate and possible distress need `--mqtt-publish-heart-rate`, and fall and fall risk need `--mqtt-publish-fall`, because none of them is validated. See the [Home Assistant guide](integrations/home-assistant.md#entity-reference) for the full list.
 
 ### Privacy mode for healthcare / AAL

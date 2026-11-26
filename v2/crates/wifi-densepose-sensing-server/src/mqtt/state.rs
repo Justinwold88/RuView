@@ -138,7 +138,8 @@ fn rate_hz_for(entity: EntityKind, rates: &PublishRates) -> f64 {
         EntityKind::BreathingRate | EntityKind::HeartRate => rates.vitals_hz,
         EntityKind::MotionLevel | EntityKind::MotionEnergy => rates.motion_hz,
         EntityKind::PresenceScore => rates.motion_hz,
-        EntityKind::Rssi => rates.rssi_hz,
+        // Changes only when a calibration finishes, so the slow RSSI rate.
+        EntityKind::Rssi | EntityKind::LinkScore => rates.rssi_hz,
         EntityKind::PoseKeypoints => rates.pose_hz,
         EntityKind::FallRiskElevated => rates.motion_hz,
     }
@@ -167,6 +168,9 @@ pub struct VitalsSnapshot {
     pub n_persons: u32,
     pub rssi_dbm: Option<f64>,
     pub vital_confidence: f64,   // 0.0–1.0
+    /// 0–100 link score from the node's last empty-room calibration;
+    /// `None` until the node has been calibrated.
+    pub link_score: Option<u8>,
 }
 
 #[derive(Serialize, Debug)]
@@ -289,6 +293,10 @@ impl<'a> StateEncoder<'a> {
                 let dbm = snap.rssi_dbm?;
                 serde_json::to_value(RssiPayload { dbm, ts: ts.clone() }).ok()?
             }
+            EntityKind::LinkScore => serde_json::to_value(ScorePayload {
+                score: f64::from(snap.link_score?),
+                ts: ts.clone(),
+            }).ok()?,
             _ => return None,
         };
         let topic = format!(
@@ -398,7 +406,23 @@ mod tests {
             n_persons: 1,
             rssi_dbm: Some(-52.0),
             vital_confidence: 0.87,
+            link_score: Some(62),
         }
+    }
+
+    #[test]
+    fn link_score_state_carries_the_score_or_nothing() {
+        let b = builder();
+        let enc = StateEncoder { builder: &b };
+        let msg = enc.numeric(EntityKind::LinkScore, &snap()).unwrap();
+        assert_eq!(
+            msg.topic,
+            "homeassistant/sensor/wifi_densepose_aabbccddeeff/link_score/state"
+        );
+        let v: Value = serde_json::from_str(&msg.payload).unwrap();
+        assert_eq!(v["score"], 62.0);
+        let uncalibrated = VitalsSnapshot { link_score: None, ..snap() };
+        assert!(enc.numeric(EntityKind::LinkScore, &uncalibrated).is_none());
     }
 
     // ─── Rate limiter ────────────────────────────────────────────────

@@ -1881,6 +1881,11 @@ struct PerNodeFeatureInfo {
     /// emit, UI heatmap) read this to decide whether to escalate.
     #[serde(skip_serializing_if = "Option::is_none")]
     novelty_score: Option<f32>,
+    /// 0–100 link score from this node's last empty-room calibration
+    /// (`POST /api/v1/calibration/motion/start`). Absent until the node has
+    /// been calibrated. The MQTT bridge publishes it as a diagnostic sensor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link_score: Option<u8>,
 }
 
 /// Build a per-node feature snapshot for the WebSocket envelope.
@@ -1894,6 +1899,7 @@ struct PerNodeFeatureInfo {
 /// Stale flag uses 5-second threshold matching `ESP32_OFFLINE_TIMEOUT`.
 fn build_node_features(
     node_states: &std::collections::HashMap<u8, NodeState>,
+    calibrations: &BTreeMap<u8, MotionCalibration>,
     now: std::time::Instant,
 ) -> Option<Vec<PerNodeFeatureInfo>> {
     if node_states.is_empty() {
@@ -1932,10 +1938,58 @@ fn build_node_features(
                 frame_rate_hz: ns.measured_sample_rate_hz().unwrap_or(0.0),
                 stale,
                 novelty_score: ns.last_novelty_score,
+                link_score: calibrations.get(&node_id).map(|c| c.link_quality.score),
             }
         })
         .collect();
     Some(entries)
+}
+
+#[cfg(test)]
+mod node_features_link_score_tests {
+    //! Issue #52: a calibrated node's link score rides on its
+    //! `node_features` entry so the MQTT bridge can publish it.
+    use super::*;
+
+    fn calibration(score: u8) -> MotionCalibration {
+        MotionCalibration {
+            presence_threshold: 0.03,
+            noisy: false,
+            empty_p50: 0.01,
+            empty_p99: 0.02,
+            empty_max: 0.025,
+            frames: 600,
+            seconds: 60.0,
+            link_quality: motion_calibration::LinkQuality {
+                score,
+                snr_db: 30.0,
+                frame_rate_hz: 10.0,
+                loss_pct: 0.0,
+                noise_ratio: 0.5,
+            },
+        }
+    }
+
+    #[test]
+    fn only_calibrated_nodes_carry_a_link_score() {
+        let mut nodes = HashMap::new();
+        nodes.insert(1u8, NodeState::new());
+        nodes.insert(2u8, NodeState::new());
+        let calibrations = BTreeMap::from([(1u8, calibration(64))]);
+        let entries = build_node_features(&nodes, &calibrations, std::time::Instant::now()).unwrap();
+        let json = serde_json::to_value(&entries).unwrap();
+        let entry = |id: u64| {
+            json.as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["node_id"].as_u64() == Some(id))
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(entry(1)["link_score"], 64);
+        assert!(entry(2).get("link_score").is_none(), "uncalibrated nodes omit the field");
+        assert!(build_node_features(&HashMap::new(), &calibrations, std::time::Instant::now()).is_none());
+    }
 }
 
 // ── ADR-044 §5.2: Rolling P95 adaptive feature normalizer ────────────────────
@@ -13995,7 +14049,7 @@ async fn udp_receiver_task(
                         // on the WebSocket envelope so cluster-Pi consumers
                         // can implement model-wake gating without round-
                         // tripping back to the server.
-                        node_features: build_node_features(&s.node_states, now),
+                        node_features: build_node_features(&s.node_states, &s.motion_calibrations, now),
                         room_inference: Some(room_inference),
                         classifier: None,
                         activity: None,
@@ -14504,7 +14558,7 @@ async fn udp_receiver_task(
                         // on the WebSocket envelope so cluster-Pi consumers
                         // can implement model-wake gating without round-
                         // tripping back to the server.
-                        node_features: build_node_features(&s.node_states, now),
+                        node_features: build_node_features(&s.node_states, &s.motion_calibrations, now),
                         room_inference: Some(room_inference),
                         classifier: None,
                         activity: None,

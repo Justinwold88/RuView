@@ -149,6 +149,7 @@ impl PublishPlanner {
             (EntityKind::BreathingRate, snap.breathing_rate_bpm.is_some()),
             (EntityKind::HeartRate, snap.heartrate_bpm.is_some()),
             (EntityKind::FallDetected, snap.fall_detected.is_some()),
+            (EntityKind::LinkScore, snap.link_score.is_some()),
         ] {
             if present {
                 np.sourced.insert(entity, now);
@@ -270,7 +271,8 @@ fn entity_available(np: &NodePlan, e: EntityKind, now: Duration, cfg: &Primitive
         | EntityKind::Rssi
         | EntityKind::BreathingRate
         | EntityKind::HeartRate
-        | EntityKind::FallDetected => fresh(e),
+        | EntityKind::FallDetected
+        | EntityKind::LinkScore => fresh(e),
         EntityKind::RoomActive | EntityKind::NoMovement | EntityKind::ElderlyInactivityAnomaly => {
             warm
         }

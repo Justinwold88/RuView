@@ -127,7 +127,8 @@ impl SensingBridge {
                   conf: f64,
                   rssi: Option<f64>,
                   motion_energy: Option<f64>,
-                  fall_detected: Option<bool>| VitalsSnapshot {
+                  fall_detected: Option<bool>,
+                  link_score: Option<u8>| VitalsSnapshot {
             node_id,
             timestamp_ms: ts,
             presence,
@@ -140,6 +141,7 @@ impl SensingBridge {
             n_persons,
             rssi_dbm: rssi,
             vital_confidence,
+            link_score,
         };
 
         let Some(arr) = v["nodes"].as_array().filter(|a| !a.is_empty()) else {
@@ -150,6 +152,7 @@ impl SensingBridge {
                 agg_conf,
                 None,
                 agg_energy,
+                None,
                 None,
             )];
         };
@@ -176,10 +179,17 @@ impl SensingBridge {
                 .unwrap_or(agg_presence);
             let motion = motion_of(ninf["classification"].as_str(), agg_motion);
             let conf = ninf["confidence"].as_f64().unwrap_or(agg_conf);
-            let energy = node_features
-                .and_then(|nf| nf.iter().find(|f| f["node_id"].as_u64() == Some(n)))
+            let nfeat = node_features
+                .and_then(|nf| nf.iter().find(|f| f["node_id"].as_u64() == Some(n)));
+            let energy = nfeat
                 .and_then(|f| f["features"]["motion_band_power"].as_f64())
                 .or(agg_energy);
+            // Only a calibrated node carries a score; out-of-range values are
+            // dropped rather than clamped.
+            let link_score = nfeat
+                .and_then(|f| f["link_score"].as_u64())
+                .filter(|s| *s <= 100)
+                .map(|s| s as u8);
             let fall = self.take_fall(n, now);
             out.push(mk(
                 format!("{}-node{node_key}", self.base_id),
@@ -189,6 +199,7 @@ impl SensingBridge {
                 node["rssi_dbm"].as_f64(),
                 energy,
                 fall,
+                link_score,
             ));
         }
         out
@@ -244,6 +255,42 @@ mod tests {
         assert_eq!(s.len(), 2, "one snapshot per device despite identical node_id 0");
         assert!(s.iter().any(|s| s.node_id == "ruview-nodea9be7e5bb1644d3a"));
         assert!(s.iter().any(|s| s.node_id == "ruview-nodea9be7d5bb1644b87"));
+    }
+
+    /// Plan item 1.1 / issue #52: a calibrated node's `node_features` entry
+    /// carries `link_score`; it reaches that node's snapshot only. An
+    /// uncalibrated node, an out-of-range value and the room-level fallback
+    /// carry none.
+    #[test]
+    fn link_score_comes_from_each_nodes_feature_entry() {
+        let v = json!({
+            "type": "sensing_update",
+            "timestamp": 1.0,
+            "classification": { "presence": true, "motion_level": "present_still", "confidence": 0.6 },
+            "vital_signs": {},
+            "nodes": [
+                { "node_id": 1, "rssi_dbm": -45.0 },
+                { "node_id": 2, "rssi_dbm": -60.0 },
+                { "node_id": 3, "rssi_dbm": -70.0 }
+            ],
+            "node_features": [
+                { "node_id": 1, "features": { "motion_band_power": 0.2 }, "link_score": 81 },
+                { "node_id": 2, "features": { "motion_band_power": 0.1 } },
+                { "node_id": 3, "features": { "motion_band_power": 0.1 }, "link_score": 250 }
+            ]
+        });
+        let s = snaps(v, "ruview");
+        let score = |id: &str| s.iter().find(|x| x.node_id == id).unwrap().link_score;
+        assert_eq!(score("ruview-node1"), Some(81));
+        assert_eq!(score("ruview-node2"), None, "uncalibrated");
+        assert_eq!(score("ruview-node3"), None, "out of range is dropped");
+
+        let room = snaps(
+            json!({ "type": "sensing_update", "classification": { "presence": false } }),
+            "ruview",
+        );
+        assert_eq!(room.len(), 1);
+        assert_eq!(room[0].link_score, None);
     }
 
     /// Regression for #872/#898/#1541: each node surfaces its OWN

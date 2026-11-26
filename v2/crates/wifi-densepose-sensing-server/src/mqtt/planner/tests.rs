@@ -94,6 +94,7 @@ fn full(presence: bool) -> VitalsSnapshot {
         heartrate_bpm: Some(62.0),
         fall_detected: Some(false),
         vital_confidence: 0.8,
+        link_score: Some(73),
         ..bare(presence)
     }
 }
@@ -140,6 +141,7 @@ fn announced_entities_are_exactly_the_sourced_ones() {
             "elderly_inactivity_anomaly",
             "fall_risk_elevated",
             "no_movement",
+            "link_score",
         ]
     );
 }
@@ -174,6 +176,7 @@ fn every_announced_entity_publishes_state_when_its_source_is_present() {
     assert!(seen["motion_energy"].contains("\"energy\":4.2"));
     assert!(seen["fall"].contains("fall_detected"));
     assert!(seen["fall_risk_elevated"].contains("\"score\""));
+    assert!(seen["link_score"].contains("\"score\":73.0"));
 }
 
 #[test]
@@ -195,6 +198,7 @@ fn unsourced_entities_are_unavailable_and_never_publish_state() {
         "someone_sleeping",
         "possible_distress",
         "fall_risk_elevated",
+        "link_score",
     ] {
         assert_eq!(last_avail[slug], "offline", "{slug} must be unavailable");
         assert!(
@@ -413,4 +417,25 @@ fn semantic_bus_samples_at_one_hz_but_keeps_fall_edges() {
     );
     p.on_snapshot(&b, &full(true), WARM + SEMANTIC_TICK);
     assert!(p.nodes[NODE].bus.fall_risk_score() >= base + 10.0);
+}
+
+/// An uncalibrated node announces the link score as unavailable; once the
+/// broadcast carries a calibration it goes online and publishes the score
+/// even in privacy mode, since it describes the link, not a person.
+#[test]
+fn link_score_goes_online_once_the_node_is_calibrated() {
+    let mut p = PublishPlanner::new(&cfg(true));
+    let b = builder();
+    let msgs = p.on_snapshot(&b, &bare(true), Duration::from_secs(0));
+    assert_eq!(avail(&msgs)["link_score"], "offline");
+    assert!(!states(&msgs).iter().any(|(s, _)| s == "link_score"));
+
+    let calibrated = VitalsSnapshot {
+        link_score: Some(58),
+        ..bare(true)
+    };
+    let msgs = p.on_snapshot(&b, &calibrated, Duration::from_secs(1));
+    assert_eq!(avail(&msgs)["link_score"], "online");
+    let published: HashMap<_, _> = states(&msgs).into_iter().collect();
+    assert!(published["link_score"].contains("\"score\":58.0"), "{published:?}");
 }

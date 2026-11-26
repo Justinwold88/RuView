@@ -1003,7 +1003,7 @@ Full design + operator guide: [`docs/integrations/home-assistant.md`](integratio
    docker run --rm --net=host ruvnet/wifi-densepose:0.7.0 \
        --source esp32 --mqtt --mqtt-host <ha-host-ip>
    ```
-4. Within ~5 seconds HA auto-creates one **device** per RuView node. By default it has 11 entities: raw signals such as presence, person count, breathing rate, motion and RSSI, plus semantic primitives such as someone-sleeping, room-active and no-movement. Heart rate and possible distress need `--mqtt-publish-heart-rate`, and fall and fall risk need `--mqtt-publish-fall`, because none of them is validated. See the [Home Assistant guide](integrations/home-assistant.md#entity-reference) for the full list.
+4. Within ~5 seconds HA auto-creates one **device** per RuView node. By default it has 12 entities: raw signals such as presence, person count, breathing rate, motion, RSSI and the link score (a diagnostic), plus semantic primitives such as someone-sleeping, room-active and no-movement. Heart rate and possible distress need `--mqtt-publish-heart-rate`, and fall and fall risk need `--mqtt-publish-fall`, because none of them is validated. See the [Home Assistant guide](integrations/home-assistant.md#entity-reference) for the full list.
 
 ### Privacy mode for healthcare / AAL
 

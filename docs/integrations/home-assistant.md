@@ -8,6 +8,23 @@ RuView publishes its full WiFi-sensing capability set to **Home Assistant** via 
 
 ## Quick start
 
+### Easiest: the Home Assistant app (Home Assistant OS)
+
+On Home Assistant OS, install RuView as an app (formerly called an add-on) instead of running Docker by hand. It is **experimental**, like the rest of RuView's Home Assistant support.
+
+1. In Home Assistant, open the app store, then the menu in the top right, then **Repositories**, and add `https://github.com/Justinwold88/ruview-ha-addon`.
+2. Install **RuView** and the **Mosquitto broker** app.
+3. In RuView's options, list your nodes' addresses or subnet under **Allowed node addresses**, then start it.
+
+The app finds the Mosquitto broker on its own and keeps the secure defaults below:
+- the web UI and API stay closed until you set a token;
+- nodes are heard only from the addresses you allow;
+- heart rate and fall detection stay off.
+
+Its [documentation](https://github.com/Justinwold88/ruview-ha-addon/blob/main/ruview/DOCS.md) covers every option and a calibration button. The rest of this guide (entities, rates, Alexa) applies to the app too. Skip to the [Entity reference](#entity-reference).
+
+The steps below are for Home Assistant installs without apps (Container or Core), or for running the server elsewhere.
+
 ### 1. Prereqs
 
 - A running **MQTT broker** on your LAN. The easiest path is the [Mosquitto add-on](https://github.com/home-assistant/addons/tree/master/mosquitto) inside Home Assistant OS (one click from the Add-on Store). EMQX and VerneMQ also work — see §Advanced brokers below.

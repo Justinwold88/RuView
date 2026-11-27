@@ -221,7 +221,7 @@ When deploying in **healthcare**, **AAL (aging-in-place)**, or **commercial** se
 - **Suppresses discovery** for those entities entirely: Home Assistant never sees them, and no availability or state topic is published for them.
 - **Keeps the semantic primitives enabled.** `someone_sleeping` and `possible_distress` (the latter only with `--mqtt-publish-heart-rate`) still use breathing and heart rate *inside the server*; only the ON/OFF state crosses the wire (ADR-115 §3.12.3). If that is too much for your deployment, drop those two entities in Home Assistant.
 
-With `--privacy-mode`, 10 entities are announced per node by default: 11 with `--mqtt-publish-heart-rate`, 12 with `--mqtt-publish-fall` and 13 with both. Privacy mode reduces what leaves the server. It does not by itself make a deployment compliant with any regulation.
+With `--privacy-mode`, 11 entities are announced per node by default: 12 with `--mqtt-publish-heart-rate`, 13 with `--mqtt-publish-fall` and 14 with both. Privacy mode reduces what leaves the server. It does not by itself make a deployment compliant with any regulation.
 
 Always pair `--privacy-mode` with `--mqtt-tls` on non-localhost brokers.
 

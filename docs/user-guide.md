@@ -410,6 +410,10 @@ Allowing the gateway admits anything that can reach the published port, so keep 
 
 The server decides that someone is present by comparing each node's motion score with a threshold. The default, 0.04, suits a typical link. A noisy link can read an empty room as occupied all the time, and a clean one can miss someone walking. A one-minute calibration of the empty room sets each node's threshold from what that room actually produces, and scores the link from 0 to 100.
 
+**From the dashboard:** open the **Sensing** tab and press **Calibrate empty room** in the *Empty-room calibration* card. It counts down while you leave, then shows each node's threshold and link score; the *Node status* card also shows each calibrated node's link score. If the server has an API token, add it first under Settings → API access.
+
+**From the command line:**
+
 ```bash
 # Wait 10 s for you to leave, then record 60 s of the empty room
 curl -s -X POST -H "Authorization: Bearer $RUVIEW_API_TOKEN" \

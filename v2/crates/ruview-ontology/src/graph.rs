@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::entity::{
-    Building, Container, Event, Floor, Object, Observation, Person, Sensor, Site, Space, Track, Zone,
+    Building, Container, Event, Floor, Object, Observation, Person, Sensor, Site, Space, Track,
+    Zone,
 };
 use crate::id::{
     BuildingId, EventId, FloorId, IdError, ObjectId, ObservationId, PersonId, SensorId, SiteId,

@@ -336,7 +336,10 @@ impl TrackManager {
             }
 
             // Deterministic order: cost, then track id.
-            scored.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.as_str().cmp(b.0.as_str())));
+            scored.sort_by(|a, b| {
+                a.1.total_cmp(&b.1)
+                    .then_with(|| a.0.as_str().cmp(b.0.as_str()))
+            });
 
             if scored.len() >= 2 && (scored[1].1 - scored[0].1) < self.config.ambiguity_margin {
                 // Two near-equal candidates: refuse to assign, spawn tentative.

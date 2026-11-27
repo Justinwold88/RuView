@@ -81,7 +81,10 @@ pub fn gaussian_to_record(
     let proof = if g.provenance.synthetic {
         ProofTag::Synthetic
     } else if ctx.proof == ProofTag::Measured
-        && ctx.reproducer.as_deref().map_or(true, |r| r.trim().is_empty())
+        && ctx
+            .reproducer
+            .as_deref()
+            .map_or(true, |r| r.trim().is_empty())
     {
         return Err(EvidenceError::MissingReproducer);
     } else {

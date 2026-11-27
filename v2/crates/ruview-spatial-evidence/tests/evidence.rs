@@ -103,8 +103,12 @@ fn measured_requires_a_non_empty_reproducer() {
             Err(EvidenceError::MissingReproducer)
         );
     }
-    let ok = gaussian_to_record(&g, 0, &GaussianExport::new(REGION, "p@0.1").measured("run-42"))
-        .unwrap();
+    let ok = gaussian_to_record(
+        &g,
+        0,
+        &GaussianExport::new(REGION, "p@0.1").measured("run-42"),
+    )
+    .unwrap();
     assert_eq!(ok.provenance.proof, ProofTag::Measured);
 }
 

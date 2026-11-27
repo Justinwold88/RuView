@@ -4,17 +4,24 @@
 # A crate joins when it is fully formatted: format it in a pull request of its
 # own (`cargo fmt -p <crate>`), then add it here. Vendored dependency patches
 # under vendor/security are byte-for-byte upstream and stay off this list.
+cog-person-count
 homecore-server
+nvsim
 nvsim-server
+ruview-active
 ruview-cognitum-spaces
 ruview-fann-head
 ruview-kernel
 ruview-offaxis
+ruview-ontology
 ruview-policy
+ruview-spatial-evidence
 ruview-spatial-memory
 ruview-survey
+ruview-track
 wifi-densepose-desktop
 wifi-densepose-mtk-bridge
 wifi-densepose-physics
+wifi-densepose-pointcloud
 wifi-densepose-privshield
 wifi-densepose-wasm

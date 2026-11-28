@@ -16001,22 +16001,15 @@ async fn main() {
                     let (vtx, vrx) = broadcast::channel::<mqtt::state::VitalsSnapshot>(64);
                     let (host, port) = (mcfg.host.clone(), mcfg.port);
                     mqtt::publisher::spawn(mcfg, builder, vrx);
-                    let mut jrx = tx.subscribe();
-                    tokio::spawn(async move {
-                        // #898/#872/#2085: one snapshot per physical node from
-                        // each `sensing_update`; `edge_vitals` feeds the fall
-                        // detector; other message types are ignored.
-                        let mut bridge = mqtt::bridge::SensingBridge::new(node_id);
-                        let started = std::time::Instant::now();
-                        while let Ok(json) = jrx.recv().await {
-                            let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) else {
-                                continue;
-                            };
-                            for snap in bridge.ingest(&v, started.elapsed()) {
-                                let _ = vtx.send(snap);
-                            }
-                        }
-                    });
+                    // #898/#872/#2085: one snapshot per physical node from
+                    // each `sensing_update`; `edge_vitals` feeds the fall
+                    // detector; other message types are ignored. `forward`
+                    // keeps going after the broadcast lags.
+                    tokio::spawn(mqtt::bridge::forward(
+                        tx.subscribe(),
+                        vtx,
+                        mqtt::bridge::SensingBridge::new(node_id),
+                    ));
                     tracing::info!("MQTT publisher started -> {host}:{port}");
                 }
                 Err(e) => tracing::error!("MQTT config invalid: {e}; publisher not started"),

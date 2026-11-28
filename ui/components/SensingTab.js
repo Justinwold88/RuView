@@ -8,6 +8,7 @@
 
 import { sensingService } from '../services/sensing.service.js';
 import { GaussianSplatRenderer } from './gaussian-splats.js';
+import { MotionCalibrationCard } from './MotionCalibrationCard.js';
 
 export class SensingTab {
   /** @param {HTMLElement} container - the #sensing section element */
@@ -18,10 +19,12 @@ export class SensingTab {
     this._unsubState = null;
     this._resizeObserver = null;
     this._threeLoaded = false;
+    this._calibrationCard = null;
   }
 
   async init() {
     this._buildDOM();
+    this._initCalibrationCard();
     await this._loadThree();
     this._initSplatRenderer();
     this._connectService();
@@ -122,6 +125,9 @@ export class SensingTab {
             <div id="nodeStatusContainer"></div>
           </div>
 
+          <!-- Empty-room calibration (issue #52), filled by MotionCalibrationCard -->
+          <div class="sensing-card" id="motionCalibrationCard"></div>
+
           <!-- Extra info -->
           <div class="sensing-card">
             <div class="sensing-card-title">Details</div>
@@ -140,6 +146,15 @@ export class SensingTab {
         </div>
       </div>
     `;
+  }
+
+  // ---- Empty-room calibration ---------------------------------------------
+
+  _initCalibrationCard() {
+    const root = this.container.querySelector('#motionCalibrationCard');
+    if (!root) return;
+    this._calibrationCard = new MotionCalibrationCard(root);
+    this._calibrationCard.init();
   }
 
   // ---- Three.js loading --------------------------------------------------
@@ -362,7 +377,8 @@ export class SensingTab {
 
       const metricsCol = document.createElement('div');
       metricsCol.style.cssText = 'flex:1;font-size:10px;color:#aaa;';
-      metricsCol.textContent = (nf.rssi_dbm || -80).toFixed(0) + ' dBm · var ' + (nf.features?.variance || 0).toFixed(1);
+      metricsCol.textContent = (nf.rssi_dbm || -80).toFixed(0) + ' dBm · var ' + (nf.features?.variance || 0).toFixed(1)
+        + (typeof nf.link_score === 'number' ? ' · link ' + nf.link_score + '/100' : '');
 
       const classCol = document.createElement('div');
       classCol.style.cssText = 'font-size:10px;font-weight:600;color:#ccc;';
@@ -399,6 +415,7 @@ export class SensingTab {
     if (this._unsubData) this._unsubData();
     if (this._unsubState) this._unsubState();
     if (this._resizeObserver) this._resizeObserver.disconnect();
+    if (this._calibrationCard) this._calibrationCard.dispose();
     if (this.splatRenderer) this.splatRenderer.dispose();
     sensingService.stop();
   }

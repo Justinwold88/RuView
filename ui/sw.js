@@ -5,7 +5,10 @@
 // that ran it hold a permanently signed-out answer. `activate` deletes every
 // cache whose name is not CACHE_NAME, so bumping is what evicts it from clients
 // already in the field. Bump again if a future change poisons the cache.
-const CACHE_NAME = 'ruview-v2';
+// v3: the Sensing tab gained the empty-room calibration card (issue #52). The
+// shell is cache-first, so without a bump a browser that loaded the dashboard
+// before keeps the old SensingTab.js and never shows the card.
+const CACHE_NAME = 'ruview-v3';
 
 // Requests whose response depends on the caller's credentials. These must never
 // be served from the Cache API.
@@ -33,6 +36,7 @@ const SHELL_ASSETS = [
   '/components/HardwareTab.js',
   '/components/LiveDemoTab.js',
   '/components/SensingTab.js',
+  '/components/MotionCalibrationCard.js',
   '/components/PoseDetectionCanvas.js',
   '/services/api.service.js',
   '/services/websocket.service.js',

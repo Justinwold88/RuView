@@ -140,14 +140,14 @@ RuView turns ordinary WiFi into a contactless sensor. A $9 ESP32 board reads the
 
 ### Built for low-power edge applications
 
-[Edge modules](#edge-intelligence-adr-041) are small programs that run directly on the ESP32 sensor — no internet needed, no cloud fees, instant response.
+[Edge modules](#-edge-module-catalog) are small programs that run directly on the ESP32 sensor — no internet needed, no cloud fees, instant response.
 
 [![Rust 1.85+](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/ruvnet/RuView/actions/workflows/ci.yml/badge.svg)](https://github.com/ruvnet/RuView/actions/workflows/ci.yml)
 [![Docker: multi-arch](https://img.shields.io/badge/docker-amd64%20%2B%20arm64-blue.svg)](https://hub.docker.com/r/ruvnet/wifi-densepose)
 [![Vital Signs](https://img.shields.io/badge/vital%20signs-breathing%20%28heart%20rate%20experimental%29-red.svg)](v2/crates/wifi-densepose-vitals/README.md)
-[![ESP32 Ready](https://img.shields.io/badge/ESP32--S3-CSI%20streaming-purple.svg)](#esp32-s3-hardware-pipeline)
+[![ESP32 Ready](https://img.shields.io/badge/ESP32--S3-CSI%20streaming-purple.svg)](firmware/esp32-csi-node/README.md)
 [![crates.io](https://img.shields.io/crates/v/wifi-densepose-ruvector.svg)](https://crates.io/crates/wifi-densepose-ruvector)
 [![Downloads](https://img.shields.io/crates/d/wifi-densepose-ruvector.svg?label=downloads)](https://crates.io/crates/wifi-densepose-ruvector)
 
@@ -172,8 +172,9 @@ RuView turns ordinary WiFi into a contactless sensor. A $9 ESP32 board reads the
 >
 > Browse the full 105-module catalog (with practical descriptions, sizes, and difficulty) below in [🧩 Edge Module Catalog](#-edge-module-catalog), or visit [seed.cognitum.one/store](https://seed.cognitum.one/store).
 >
-> 🤗 **Pretrained weights**: download from [`ruvnet/wifi-densepose-pretrained`](https://huggingface.co/ruvnet/wifi-densepose-pretrained) — see [Loading the pretrained model](#loading-the-pretrained-model) below for one-command setup.
+> 🤗 **Pretrained weights**: download from [`ruvnet/wifi-densepose-pretrained`](https://huggingface.co/ruvnet/wifi-densepose-pretrained) — see [Pretrained model on Hugging Face](#-pretrained-model-on-hugging-face) below for one-command setup.
 
+<a id="quick-start"></a>
 <details>
 <summary><strong>Quick start options</strong> — Docker, ESP32-S3/C6, Cognitum Seed, and Python</summary>
 
@@ -263,9 +264,9 @@ pip install "ruview[client]"              # or: pip install "wifi-densepose[clie
   &nbsp;|&nbsp;
   <a href="https://ruvnet.github.io/RuView/three.js/"><strong>▶ three.js Demos (5)</strong></a>
 
-> The [server](#-quick-start) is optional for visualization and aggregation — the ESP32 [runs independently](#esp32-s3-hardware-pipeline) for presence detection, vital signs, and fall alerts.
+> The [server](#quick-start) is optional for visualization and aggregation — the ESP32 [runs independently](firmware/esp32-csi-node/README.md) for presence detection, vital signs, and fall alerts.
 >
-> **Live ESP32 pipeline**: Connect an ESP32-S3 node → run the [sensing server](#sensing-server) → open the [pose fusion demo](https://ruvnet.github.io/RuView/pose-fusion.html) for real-time dual-modal pose estimation (webcam + WiFi CSI). See [ADR-059](docs/adr/ADR-059-live-esp32-csi-pipeline.md). (The webcam supplies ground-truth pose in this dual-modal demo; the CSI-only on-device 17-keypoint model is still first-cut — see [Model weights: what's real, what's not](#model-weights-whats-real-whats-not).)
+> **Live ESP32 pipeline**: Connect an ESP32-S3 node → run the [sensing server](v2/crates/wifi-densepose-sensing-server/README.md) → open the [pose fusion demo](https://ruvnet.github.io/RuView/pose-fusion.html) for real-time dual-modal pose estimation (webcam + WiFi CSI). See [ADR-059](docs/adr/ADR-059-live-esp32-csi-pipeline.md). (The webcam supplies ground-truth pose in this dual-modal demo; the CSI-only on-device 17-keypoint model is still first-cut — see [Model weights: what's real, what's not](#model-weights-whats-real-whats-not).)
 >
 > **three.js scene gallery** at [`/three.js/`](https://ruvnet.github.io/RuView/three.js/) — five progressively richer ADR-097 demos: helpers, cinematic, GLTF skinned, FBX skinned, and a live MediaPipe→Mixamo retargeting feed driven by ESP32 CSI. Demos 04 and 05 require a local Mixamo `X Bot.fbx` (license boundary — not redistributed).
 
@@ -732,7 +733,7 @@ cargo run -p wifi-densepose-sensing-server -- --model model.rvf --build-index en
 | Per-room MicroLoRA adapter | ~1,800 | 2 KB |
 | **Total** | **~55,000** | **55 KB** (of 520 KB available) |
 
-The self-learning system builds on the [AI Backbone (RuVector)](#ai-backbone-ruvector) signal-processing layer — attention, graph algorithms, and compression — adding contrastive learning on top.
+The self-learning system builds on the [RuVector integration](v2/crates/README.md#ruvector-integration) signal-processing layer — attention, graph algorithms, and compression — adding contrastive learning on top.
 
 See [`docs/adr/ADR-024-contrastive-csi-embedding-model.md`](docs/adr/ADR-024-contrastive-csi-embedding-model.md) for full architectural details.
 

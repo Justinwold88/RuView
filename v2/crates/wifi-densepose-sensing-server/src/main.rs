@@ -56,7 +56,11 @@ use wifi_densepose_sensing_server::bootstrap_baseline::{
     BOOTSTRAP_VALIDATION_SAMPLE_TIMEOUT_MS,
 };
 // ADR-295 / ADR-297: canonical provenance state + per-node/room inference.
-use wifi_densepose_sensing_server::best_link::{self, BestLink};
+use wifi_densepose_sensing_server::best_link::BestLink;
+// The module path itself is only used by test code (state builders and the
+// scenario harness).
+#[cfg(test)]
+use wifi_densepose_sensing_server::best_link;
 use wifi_densepose_sensing_server::inference::{fuse_room, NodeInference, RoomInference};
 use wifi_densepose_sensing_server::motion_calibration::{self, MotionCalibration};
 use wifi_densepose_sensing_server::periodic_motion::PeriodicDetector;
@@ -6409,7 +6413,8 @@ fn plan_source(
         // frames. Before #2097 these names fell into a catch-all that bound no
         // receiver, so nothing was ever ingested. Never run the ESP32-shaped
         // simulator alongside a vendor feed.
-        "mediatek" | "qualcomm" | "realtek" | "realtek_csi" => SourcePlan {
+        // (`mediatek` has its own arm above, with the same plan.)
+        "qualcomm" | "realtek" | "realtek_csi" => SourcePlan {
             initial_source: requested.to_string(),
             bind_udp: true,
             run_simulator: false,
@@ -16091,7 +16096,7 @@ async fn main() {
     // Populated inside the `multistatic_fuser` field initializer below, then
     // threaded into `engine_bridge` so both fusion paths honor the same
     // WDP_TDM_SLOTS/WDP_GUARD_INTERVAL_US-derived guard (#1049/#1057).
-    let mut engine_bridge_multistatic_cfg: Option<MultistaticConfig> = None;
+    let engine_bridge_multistatic_cfg: Option<MultistaticConfig>;
     let mut node_positions_config: HashMap<u8, [f32; 3]> = HashMap::new();
     // The same map for the governed fuser behind `engine_bridge`, which
     // otherwise places every node at the origin.

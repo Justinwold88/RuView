@@ -5,7 +5,8 @@ Applies the frozen scoring rules of docs/validation/real-home-dataset-protocol.m
 to three inputs:
 - the live room verdict logged by log_outputs.py
 - the guarded intervals written by `labels.py check --intervals`
-- optionally, the tee capture for the mmWave breathing reference
+- optionally, the mmWave reference: the fused vitals packets in the tee
+  capture, and/or the reference kit's log written by record_mmwave.py
 
 Python standard library only. Every log and capture file is checked against
 its manifest's SHA-256 before use.
@@ -35,6 +36,9 @@ WALK_IN_AFTER_NS = 10 * NS
 WALK_IN_TARGET_S = 2.0
 MMWAVE_MAX_AGE_NS = 5 * NS
 MMWAVE_BR_RANGE = (6.0, 40.0)
+KIT_STALE_NS = 70 * NS  # record_mmwave.py writes "alive" every 30 s while connected
+WALK_IN_ONSET_WINDOW_NS = 10 * NS
+WALK_IN_ONSET_AGREE_NS = 2 * NS
 FUSED_MAGIC = 0xC5110004
 MINIMUM = {"empty_home_hours": 24.0, "still_minutes_in_area": 120.0, "walk_ins": 30}
 TARGETS = {"false_events_per_empty_day": 1.0, "still_held_share": 0.90, "walk_in_latency_s": WALK_IN_TARGET_S}
@@ -65,7 +69,8 @@ def verified_files(root, manifest_name, allow_unclosed=False):
             entry = json.loads(line)
             listed[entry["file"]] = entry["sha256"]
     files, unclosed = [], 0
-    pattern = "outputs/**/*.jsonl" if manifest_name == "outputs-manifest.jsonl" else "*/*.pcap"
+    pattern = {"outputs-manifest.jsonl": "outputs/**/*.jsonl",
+               "mmwave-manifest.jsonl": "mmwave/**/*.jsonl"}.get(manifest_name, "*/*.pcap")
     for path in sorted(root.glob(pattern)):
         relative = path.relative_to(root).as_posix()
         if relative not in listed:
@@ -183,6 +188,106 @@ def mmwave_breathing(capture_files):
     return out
 
 
+class KitReference:
+    """The reference kit's log (record_mmwave.py): presence over time, and its
+    breathing rate. A value holds until the next one, a disconnect, or 70 s
+    without any line (the recorder writes "alive" every 30 s while connected)."""
+
+    def __init__(self, lines):
+        self.events = sorted(((int(r["t_ns"]), r) for r in lines if "t_ns" in r), key=lambda e: e[0])  # stable: file order at equal times
+        self.times = [t for t, _ in self.events]
+        points, present = [], None
+        for t, record in self.events:
+            if record.get("status") == "disconnected":
+                present = None
+            if record.get("field") == "presence":
+                present = bool(record["value"])
+            points.append((t, present))
+        self.presence_points = points
+
+    def presence_at(self, t):
+        """True, False, or None (unknown) at time t."""
+        index = bisect.bisect_right(self.times, t) - 1
+        if index < 0 or t - self.times[index] > KIT_STALE_NS:
+            return None
+        return self.presence_points[index][1]
+
+    def breathing(self):
+        """(time_ns, "kit", bpm) while the kit reports a person, 6-40 BPM."""
+        out = []
+        for t, record in self.events:
+            if record.get("field") == "breathing_bpm" and self.presence_at(t) is True:
+                bpm = float(record["value"])
+                if MMWAVE_BR_RANGE[0] <= bpm <= MMWAVE_BR_RANGE[1]:
+                    out.append((t, "kit", bpm))
+        return out
+
+    def onsets(self):
+        """Times where the reported presence goes from False to True."""
+        out, previous = [], None
+        for t, present in self.presence_points:
+            if present is True and previous is False:
+                out.append(t)
+            previous = present
+        return out
+
+    def present_seconds(self, start, end):
+        """(known seconds, seconds with a person reported) within [start, end)."""
+        known = present = 0
+        index = max(0, bisect.bisect_right(self.times, start) - 1)
+        cursor = start
+        while cursor < end and index < len(self.times):
+            t = self.times[index]
+            nxt = self.times[index + 1] if index + 1 < len(self.times) else None
+            hold_end = min(end, t + KIT_STALE_NS if nxt is None else min(nxt, t + KIT_STALE_NS))
+            value = self.presence_points[index][1]
+            piece_start = max(cursor, t)
+            if hold_end > piece_start and value is not None:
+                known += hold_end - piece_start
+                present += (hold_end - piece_start) if value else 0
+            cursor = max(cursor, hold_end if nxt is None else nxt)
+            index += 1
+        return known / NS, present / NS
+
+
+def reference_checks(kit, intervals, walk_ins):
+    """The protocol's two reference checks against the kit's presence; reported, never corrected."""
+    empty = {"intervals": 0, "with_reference": 0, "contradicted": 0, "person_reported_minutes": 0.0}
+    for item in intervals:
+        if item["state"] != "home_empty":
+            continue
+        empty["intervals"] += 1
+        known, present = kit.present_seconds(to_ns(item["start"]), to_ns(item["end"]))
+        if known > 0:
+            empty["with_reference"] += 1
+        if present > 0:
+            empty["contradicted"] += 1
+            empty["person_reported_minutes"] += present / 60
+    walks = {"walk_ins": 0, "agree_within_2s": 0, "disagree": 0, "already_present": 0,
+             "no_onset": 0, "no_reference": 0, "offsets_s": []}
+    onsets = kit.onsets()
+    for walk in walk_ins:
+        walks["walk_ins"] += 1
+        reference = to_ns(walk["time"])
+        before = kit.presence_at(reference - WALK_IN_BEFORE_NS)
+        if before is None and kit.presence_at(reference) is None:
+            walks["no_reference"] += 1
+            continue
+        if before is True:
+            walks["already_present"] += 1
+            continue
+        near = [t for t in onsets if abs(t - reference) <= WALK_IN_ONSET_WINDOW_NS]
+        if not near:
+            walks["no_onset"] += 1
+            continue
+        offset = min(near, key=lambda t: abs(t - reference)) - reference
+        walks["offsets_s"].append(offset / NS)
+        walks["agree_within_2s" if abs(offset) <= WALK_IN_ONSET_AGREE_NS else "disagree"] += 1
+    offsets = sorted(walks.pop("offsets_s"))
+    walks["median_offset_s"] = statistics.median(offsets) if offsets else None
+    return {"empty_home": empty, "walk_ins": walks}
+
+
 def subtract_spans(span, cuts):
     """Remove every cut (start, end) from one (start, end) span; returns the pieces left."""
     pieces = [span]
@@ -211,7 +316,7 @@ def share(numerator, denominator):
     return None if denominator <= 0 else numerator / denominator
 
 
-def score(records, scoring, split, mmwave=None):
+def score(records, scoring, split, mmwave=None, kit=None):
     timeline = Timeline(records)
     intervals = [i for i in scoring["intervals"] if i["split"] == split]
     walk_ins = [w for w in scoring["walk_ins"] if w["split"] == split]
@@ -280,6 +385,7 @@ def score(records, scoring, split, mmwave=None):
         breathing = {"pairs": len(errors), "estimates_in_still_or_sleep": logged,
                      "median_abs_error_bpm": statistics.median(errors) if errors else None,
                      "share_within_0_5_bpm": share(sum(e <= 0.5 for e in errors), len(errors))}
+    checks = reference_checks(kit, intervals, walk_ins) if kit is not None else None
     minimum = {"empty_home_hours": empty["scored_hours"] + empty["no_output_hours"],
                "still_minutes_in_area": still["scored_minutes"] + still["no_output_minutes"],
                "walk_ins": len(walk_ins)}
@@ -294,7 +400,8 @@ def score(records, scoring, split, mmwave=None):
             "pets_alone": pets_alone,
             "still_in_area": still, "still_outside_area": held("still_outside"), "sleep": held("sleep"),
             "walk_ins": walk_summary, "pet_only": {"episodes": len(pet), "raised_occupied": pet_raised},
-            "breathing_vs_mmwave": breathing, "minimum_test_data": {"met": not missing, "missing": missing},
+            "breathing_vs_mmwave": breathing, "mmwave_reference_checks": checks,
+            "minimum_test_data": {"met": not missing, "missing": missing},
             "g2": gate if gate is not None else ("insufficient data" if split == "test" else "train split: not a G2 result")}
 
 
@@ -330,6 +437,16 @@ def markdown(report):
         b = r["breathing_vs_mmwave"]
         lines.append(f"- Breathing vs mmWave reference: median error {fmt(b['median_abs_error_bpm'])} BPM over "
                      f"{b['pairs']} pairs ({fmt(b['share_within_0_5_bpm'], pct=True)} within 0.5 BPM)")
+    checks = r.get("mmwave_reference_checks")
+    if checks:
+        e, w = checks["empty_home"], checks["walk_ins"]
+        lines += ["", "Reference checks against the mmWave kit (reported, not corrected):", "",
+                  f"- Empty-home intervals where the kit reported a person: {e['contradicted']} of "
+                  f"{e['with_reference']} with a reference ({e['intervals']} in all; "
+                  f"{fmt(e['person_reported_minutes'], 1)} min reported)",
+                  f"- Walk-ins whose kit onset is within 2 s: {w['agree_within_2s']} of {w['walk_ins']} "
+                  f"(disagree {w['disagree']}, kit already present {w['already_present']}, no onset {w['no_onset']}, "
+                  f"no reference {w['no_reference']}; median offset {fmt(w['median_offset_s'])} s)"]
     gate = r["g2"]
     verdict = gate if isinstance(gate, str) else ("PASSED" if gate["passed"] else "NOT PASSED")
     lines += ["", f"**G2: {verdict}**", ""]
@@ -361,15 +478,20 @@ def main(argv=None):
         records = [json.loads(line) for path in outputs for line in path.read_text().splitlines() if line]
         require(records, "no_output_records")
         captures, capture_check = verified_files(root, "manifest.jsonl", args.allow_unclosed)
+        kit_files, kit_check = verified_files(root, "mmwave-manifest.jsonl", args.allow_unclosed)
+        kit = KitReference(json.loads(line) for path in kit_files for line in path.read_text().splitlines()
+                           if line) if kit_files else None
+        mmwave = (mmwave_breathing(captures) if captures else []) + (kit.breathing() if kit else [])
         scoring = json.loads(args.intervals.read_text())
-        results = score(records, scoring, args.split, mmwave_breathing(captures) if captures else None)
+        results = score(records, scoring, args.split,
+                        sorted(mmwave, key=lambda m: m[0]) if (captures or kit) else None, kit)
     except (ScoreError, OSError, ValueError, KeyError, struct.error) as error:
         print(json.dumps({"status": "ERROR", "reason": str(error)}))
         return 1
     report = {"evidence": "MEASURED", "protocol": "docs/validation/real-home-dataset-protocol.md",
               "freeze_commit": args.freeze_commit or "not frozen (train split)",
               "scored_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-              "inputs": {"outputs": output_check, "captures": capture_check,
+              "inputs": {"outputs": output_check, "captures": capture_check, "mmwave_kit": kit_check,
                          "intervals_sha256": hashlib.sha256(args.intervals.read_bytes()).hexdigest()},
               "rescore_reason": args.rescore_reason, "results": results}
     args.json.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

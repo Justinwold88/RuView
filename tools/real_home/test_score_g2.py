@@ -135,6 +135,57 @@ def fused(node, bpm, present=True):
     return bytes(data)
 
 
+def kit_lines(events):
+    """[(t_s, field_or_status, value)] -> record_mmwave.py lines."""
+    out = []
+    for t, what, value in events:
+        line = {"t_ns": BASE + int(t * NS)}
+        if what in ("connected", "alive", "disconnected"):
+            line["status"] = what
+        else:
+            line.update(field=what, value=value)
+        out.append(line)
+    return out
+
+
+class KitReferenceTests(unittest.TestCase):
+    def kit(self):
+        events = [(0, "connected", None), (0, "presence", False)]
+        events += [(t, "alive", None) for t in range(30, 600, 30)]
+        events += [(99, "presence", True), (100, "breathing_bpm", 14.0), (101, "breathing_bpm", 99.0),
+                   (130, "presence", False), (131, "breathing_bpm", 13.0),
+                   (300, "disconnected", None), (305, "connected", None), (305, "presence", True),
+                   (400, "presence", False), (499.5, "presence", True), (520, "presence", False)]
+        return g2.KitReference(kit_lines(events))
+
+    def test_presence_holds_until_a_change_disconnect_or_silence(self):
+        kit = self.kit()
+        self.assertIs(kit.presence_at(BASE + 50 * NS), False)
+        self.assertIs(kit.presence_at(BASE + 120 * NS), True)
+        self.assertIsNone(kit.presence_at(BASE + 302 * NS))  # disconnected
+        self.assertIs(kit.presence_at(BASE + 310 * NS), True)
+        self.assertIsNone(kit.presence_at(BASE + 700 * NS))  # 70 s after the last line
+        # Breathing counts only while the kit reports a person, and only 6-40 BPM.
+        self.assertEqual(kit.breathing(), [(BASE + 100 * NS, "kit", 14.0)])
+        # The reconnect at 305 s is not an onset: the state before it was unknown.
+        self.assertEqual(kit.onsets(), [BASE + 99 * NS, BASE + int(499.5 * NS)])
+
+    def test_reference_checks(self):
+        kit = self.kit()
+        intervals = [interval("home_empty", 140, 290), interval("home_empty", 380, 450),
+                     interval("home_empty", 800, 900), interval("still", 100, 130)]
+        walk_ins = [{"time": iso(BASE + t * NS)} for t in (100, 110, 200, 302, 497, 485)]
+        checks = g2.reference_checks(kit, intervals, walk_ins)
+        self.assertEqual(checks["empty_home"], {"intervals": 3, "with_reference": 2, "contradicted": 1,
+                                                "person_reported_minutes": 20 / 60})
+        w = checks["walk_ins"]
+        # 100: onset 1 s before; 110: already present 2 s before; 200: no onset; 302: no reference;
+        # 497: onset 2.5 s after (disagree); 485: the next onset is 14.5 s later, outside the 10 s window.
+        self.assertEqual((w["agree_within_2s"], w["disagree"], w["already_present"], w["no_onset"],
+                          w["no_reference"]), (1, 1, 1, 2, 1))
+        self.assertEqual(w["median_offset_s"], 0.75)
+
+
 class FileTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -183,6 +234,33 @@ class FileTests(unittest.TestCase):
         self.assertEqual(g2.nearest_rank(list(range(1, 11)), 0.9), 9)
         self.assertEqual(g2.nearest_rank([5.0], 0.9), 5.0)
         self.assertIsNone(g2.nearest_rank([], 0.9))
+
+    def test_cli_uses_the_kit_log_for_breathing_and_reference_checks(self):
+        intervals = self.write_inputs()
+        scoring = json.loads(intervals.read_text())
+        scoring["intervals"].append(interval("still", 0, 60))
+        intervals.write_text(json.dumps(scoring))
+        kit = "".join(json.dumps(line) + "\n" for line in kit_lines(
+            [(0, "connected", None), (0, "presence", True), (20, "breathing_bpm", 15.0)]))
+        (self.root / "mmwave/2026-11-30").mkdir(parents=True)
+        (self.root / "mmwave/2026-11-30/2026-11-30T01Z.jsonl").write_text(kit)
+        (self.root / "mmwave-manifest.jsonl").write_text(json.dumps(
+            {"file": "mmwave/2026-11-30/2026-11-30T01Z.jsonl", "sha256": hashlib.sha256(kit.encode()).hexdigest()})
+            + "\n")
+        out = Path(self.directory.name)
+        self.assertEqual(g2.main(["--data", str(self.root), "--intervals", str(intervals), "--split", "test",
+                                  "--freeze-commit", "abc", "--report", str(out / "r.md"),
+                                  "--json", str(out / "r.json")]), 0)
+        report = json.loads((out / "r.json").read_text())
+        self.assertEqual(report["inputs"]["mmwave_kit"], {"files": 1, "unclosed": 0})
+        checks = report["results"]["mmwave_reference_checks"]
+        self.assertEqual(checks["empty_home"]["contradicted"], 1)
+        # The kit alone is enough for a breathing reference (this log has no estimates to pair).
+        self.assertIsNotNone(report["results"]["breathing_vs_mmwave"])
+        self.assertIn("Empty-home intervals where the kit reported a person: 1 of 1", (out / "r.md").read_text())
+        (self.root / "mmwave/2026-11-30/2026-11-30T01Z.jsonl").write_text(kit + "{}\n")
+        self.assertEqual(g2.main(["--data", str(self.root), "--intervals", str(intervals), "--split", "train",
+                                  "--report", str(out / "t.md"), "--json", str(out / "t.json")]), 1)
 
     def test_cli_scores_once_and_checks_hashes(self):
         intervals = self.write_inputs()

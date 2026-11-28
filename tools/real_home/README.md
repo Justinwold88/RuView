@@ -13,6 +13,13 @@ Tools for the [real-home dataset protocol](../../docs/validation/real-home-datas
   keeping only the room verdict, node levels, the followed link and the
   breathing estimate. It writes hourly JSON lines with a SHA-256 manifest and
   logs outages once each.
+- `record_mmwave.py` records the mmWave reference kit (issue #51: the Seeed
+  MR60BHA2 kit as sold, running ESPHome) on the host clock. It reads the
+  kit's ESPHome API read-only on a private address (`--esphome`), or its USB
+  log (`--serial`, needs pyserial). It keeps only whether the kit reports a
+  person and its breathing rate, plus connect, disconnect and 30 s `alive`
+  lines, in hourly JSON lines under `mmwave/` with a SHA-256 manifest. An
+  encrypted or password-protected API is refused with a remedy, not retried.
 - `labels.py mark` appends a timestamped label event. `labels.py check`
   validates the label file, totals each protocol day, applies the train/test
   split and tests the minimum test data. With `--intervals` it writes the
@@ -22,6 +29,7 @@ Tools for the [real-home dataset protocol](../../docs/validation/real-home-datas
 # Server: add --udp-tee 127.0.0.1:5600 to the usual command line
 python tools/real_home/record_tee.py --listen 127.0.0.1:5600 --output /private/ruview-home
 python tools/real_home/log_outputs.py --url http://127.0.0.1:8080 --output /private/ruview-home
+python tools/real_home/record_mmwave.py --esphome 192.168.1.40 --output /private/ruview-home  # or --serial COM5
 
 python tools/real_home/labels.py mark home_empty_start --labels /private/ruview-home/labels.csv
 python tools/real_home/labels.py mark walk_in --source door --labels /private/ruview-home/labels.csv
@@ -32,8 +40,11 @@ python tools/real_home/labels.py check --labels /private/ruview-home/labels.csv 
 ## Scoring (plan item 2.4)
 
 `score_g2.py` applies the protocol's frozen scoring rules to the output log,
-the guarded intervals and, if present, the tee capture's mmWave breathing
-values. It checks every file against its manifest's SHA-256 first. Test days
+the guarded intervals and, if present, the mmWave reference: the tee
+capture's fused breathing values and the kit's log. From the kit's log it
+also reports the protocol's two reference checks: empty-home intervals where
+the kit reported a person, and whether each walk-in's kit onset is within
+2 s. It checks every file against its manifest's SHA-256 first. Test days
 need `--freeze-commit` and are scored once; a second test scoring needs
 `--rescore-reason`, which is recorded in `scoring/test-scored.json`.
 

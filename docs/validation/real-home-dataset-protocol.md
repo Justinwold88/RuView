@@ -76,9 +76,13 @@ Otherwise the result is "insufficient data", with what is missing.
   - **Missed:** there is no change in the window.
 - **Breathing (Phase 1 check).**
   - Over guarded `still` and `sleep` pieces, compare each logged
-    `breathing_bpm` with the mmWave breathing rate in the fused vitals packets
-    of the tee capture: magic `0xC5110004`, float at bytes 32–35, used only
-    when flags bit 3 is set and the rate is 6–40 BPM.
+    `breathing_bpm` with the mmWave breathing rate. It comes from either
+    source of the mmWave reference (see below), or both:
+    - the fused vitals packets of the tee capture: magic `0xC5110004`, float
+      at bytes 32–35, used only when flags bit 3 is set and the rate is
+      6–40 BPM;
+    - the reference kit's log (`mmwave/`), used only while the kit reports a
+      person and the rate is 6–40 BPM.
   - Use the latest mmWave value from the last 5 s. Report the median absolute
     error.
   - The mmWave module is a reference, not ground truth. Its own accuracy is
@@ -97,7 +101,8 @@ and this protocol forbids uploading them anywhere.
   time `exclude` or stop the recorder. Excluded time is deleted before
   analysis.
 - **No cameras or microphones.** Ground truth comes from labels, the mmWave
-  module on a node, and optionally a door contact sensor.
+  reference (a module on a node or the reference kit), and optionally a door
+  contact sensor.
 - **Labels carry no names.** Use `P1`, `P2` and so on. Notes must not contain
   names, health details or anything said in the home.
 - **Storage.** Raw captures and labels stay in one private directory outside
@@ -119,7 +124,10 @@ They describe the home, so they stay private with the data.
   room has no node and is outside every link's sensing area
 - each node's board, firmware version and app SHA-256, position and height,
   plus the access point position, channel and bandwidth
-- the mmWave module type and position, if one is fitted
+- the mmWave reference: the module on a node, or the reference kit (for
+  example the Seeed MR60BHA2 kit, as sold, running ESPHome) with its
+  position, height, facing and ESPHome version, and how it is read
+  (`--esphome` over the network or `--serial` over USB)
 - the marked still spots, numbered S1, S2 and so on, and whether each is
   inside the best link's sensing area. That is the area where a walk-in
   through it is caught on a spot test (item 2.5).
@@ -156,7 +164,23 @@ minutes of runtime log (item 2.1). A build or a simulator is not evidence.
 
    G2 is scored on this log: it is what Home Assistant saw. The raw tee capture
    allows later replays with other settings.
-4. **Calibrate.** Run the empty-room calibration (item 1.1) on day 1, and again
+4. **Record the mmWave reference kit, if one is used.** The kit stays as
+   sold; nothing is reflashed or wired. Run its recorder for the whole study
+   too, on the same host:
+
+   ```bash
+   python tools/real_home/record_mmwave.py --esphome 192.168.1.40 --output /private/ruview-home
+   ```
+
+   It reads the kit's ESPHome API read-only (a private address only; use
+   `--serial COM5` over the kit's USB cable if its API is encrypted). It
+   keeps only whether the kit reports a person and its breathing rate, with
+   the host receive time, in one file per UTC hour under `mmwave/`, each
+   closed with its SHA-256 in `mmwave-manifest.jsonl`. It logs connects,
+   disconnects and an `alive` line every 30 s, so a gap in the reference is
+   visible. A value holds until the next one, a disconnect, or 70 s without
+   any line.
+5. **Calibrate.** Run the empty-room calibration (item 1.1) on day 1, and again
    after anything in the setup sheet changes.
 5. **Duration.** Record for at least 7 consecutive days, around the clock.
    The host clock must be NTP-synchronised. The recorder logs clock jumps above
@@ -211,13 +235,17 @@ animals, so what was in the room decides how time counts:
 
 **Reference checks, reported and not fixed silently:**
 
-- **Walk-in reference.** Where a node reports mmWave presence, its onset should
-  fall within 2 s of the `walk_in` reference. Walk-ins whose references
-  disagree by more than 2 s are reported as such. They are kept in the count
-  and are not corrected.
-- **Empty home.** If the mmWave module reports a target during `empty_home`,
-  the interval is reported as contradicted. Whether it still counts is decided
-  before the test days are opened (see Split).
+- **Walk-in reference.** Where the mmWave reference reports presence, its onset
+  (absent to present) should fall within 2 s of the `walk_in` reference.
+  Walk-ins whose references disagree by more than 2 s are reported as such.
+  They are kept in the count and are not corrected. `score_g2.py` also
+  reports walk-ins where the reference already reported a person 2 s before,
+  had no onset within 10 s, or was not connected.
+- **Empty home.** If the mmWave reference reports a target during
+  `empty_home`, the interval is reported as contradicted, with the minutes
+  it reported a person. Whether it still counts is decided before the test
+  days are opened (see Split).
+- `score_g2.py` computes both checks from the reference kit's log.
 
 ## Split by day (frozen)
 

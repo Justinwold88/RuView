@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use serde_json::Value;
+use tokio::sync::broadcast;
 
 use super::state::VitalsSnapshot;
 
@@ -223,10 +224,87 @@ fn motion_of(level: Option<&str>, fallback: f64) -> f64 {
     }
 }
 
+/// Run `bridge` over the server's JSON broadcast and send every snapshot to
+/// `vtx`, until the broadcast closes.
+///
+/// A receiver that falls behind gets `RecvError::Lagged`. That skips the
+/// missed messages, which is fine because the next `sensing_update` carries
+/// the full state, so the loop goes on. Before this function, `main.rs` read
+/// the broadcast with `while let Ok(..)`, which ended the task on the first
+/// lag: Home Assistant then stopped getting updates, with nothing in the log.
+pub async fn forward(
+    mut jrx: broadcast::Receiver<String>,
+    vtx: broadcast::Sender<VitalsSnapshot>,
+    mut bridge: SensingBridge,
+) {
+    let started = std::time::Instant::now();
+    loop {
+        match jrx.recv().await {
+            Ok(json) => {
+                let Ok(v) = serde_json::from_str::<Value>(&json) else {
+                    continue;
+                };
+                for snap in bridge.ingest(&v, started.elapsed()) {
+                    let _ = vtx.send(snap);
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(missed)) => {
+                tracing::warn!("MQTT bridge fell behind and skipped {missed} sensing messages");
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn update(presence: bool) -> String {
+        json!({
+            "type": "sensing_update",
+            "timestamp": 1.0,
+            "classification": { "presence": presence, "motion_level": "present_moving", "confidence": 0.7 },
+            "vital_signs": {},
+        })
+        .to_string()
+    }
+
+    /// The bug `forward` fixes: overflow the broadcast so the bridge's
+    /// receiver lags, and check that later updates still reach the
+    /// publisher. The old `while let Ok(..)` loop stopped at the lag.
+    #[tokio::test]
+    async fn forward_keeps_going_after_the_broadcast_lags() {
+        let (tx, jrx) = broadcast::channel::<String>(2);
+        let (vtx, mut vrx) = broadcast::channel::<VitalsSnapshot>(64);
+        let task = tokio::spawn(forward(jrx, vtx, SensingBridge::new("ruview")));
+
+        // Single-threaded test runtime: the task doesn't run until we yield,
+        // so these ten sends overflow a capacity-2 channel.
+        for _ in 0..10 {
+            tx.send(update(false)).unwrap();
+        }
+        tx.send("not json".into()).unwrap();
+        tokio::task::yield_now().await;
+
+        // Drain what made it through the lag, then send one fresh update.
+        // The drain stops on a closed channel too, so a forwarder that has
+        // quit fails the next step instead of spinning here.
+        while let Ok(Ok(_)) = tokio::time::timeout(Duration::from_millis(50), vrx.recv()).await {}
+        tx.send(update(true)).unwrap();
+        let snap = tokio::time::timeout(Duration::from_secs(2), vrx.recv())
+            .await
+            .expect("no snapshot within 2 s")
+            .expect("the forwarder stopped at the lag");
+        assert!(snap.presence, "{snap:?}");
+
+        drop(tx);
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("forward ends when the broadcast closes")
+            .unwrap();
+    }
 
     const T0: Duration = Duration::from_secs(100);
 

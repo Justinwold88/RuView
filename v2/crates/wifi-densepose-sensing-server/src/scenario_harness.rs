@@ -33,6 +33,10 @@
 //! than the person's reflection, which the filter reports instead of
 //! removing.
 //!
+//! A still person is also checked on each of those three links at three
+//! reflection strengths (-15, -20 and -25 dB), next to the breathing
+//! evidence the same rooms produce while empty (issue #56).
+//!
 //! Best-link mode (plan item 1.4) is checked with three links on one room:
 //! link 1 sees the person on a typical link, link 2's path never crosses
 //! them, and link 3 sees them through a noisy link. A five-minute ranking
@@ -469,6 +473,10 @@ struct FrameOut {
     smoothed_motion: f64,
     detector_br: Option<f64>,
     detector_hr: Option<f64>,
+    /// The detector's latest breathing evidence, and how many spectral
+    /// estimates it has made (the evidence is fresh when this changes).
+    breathing_evidence: Option<f64>,
+    estimate_count: u64,
 }
 
 #[derive(Default)]
@@ -546,6 +554,8 @@ fn replay_with_threshold(
             smoothed_motion: ns.smoothed_motion,
             detector_br: raw.breathing_rate_bpm,
             detector_hr: raw.heart_rate_bpm,
+            breathing_evidence: ns.vital_detector.breathing_evidence(),
+            estimate_count: ns.vital_detector.estimate_count(),
         });
     }
     out
@@ -559,12 +569,24 @@ fn replay_with_threshold(
 /// empty, with fresh noise, wait out the start delay, then feed 60 s of the
 /// node's smoothed motion to the collector.
 fn calibrate(sc: &Scenario) -> Result<MotionCalibration, motion_calibration::CalibrationError> {
+    calibrate_segment(sc, &calibration_segment(sc))
+}
+
+/// The replayed empty-room recording a calibration of `sc`'s room sees:
+/// the start delay, then the collection window.
+fn calibration_segment(sc: &Scenario) -> Vec<FrameOut> {
     let mut empty = sc.clone();
     empty.person = Person::None;
     empty.seconds =
         motion_calibration::DEFAULT_DELAY_SECS + motion_calibration::DEFAULT_CALIBRATION_SECS;
     let g = generate_with(&empty, Some(sc.seed ^ CALIBRATION_STREAM));
-    let out = replay(&empty, &g, &mut Timing::default());
+    replay(&empty, &g, &mut Timing::default())
+}
+
+fn calibrate_segment(
+    sc: &Scenario,
+    out: &[FrameOut],
+) -> Result<MotionCalibration, motion_calibration::CalibrationError> {
     let skip = (motion_calibration::DEFAULT_DELAY_SECS * sc.fs).round() as usize;
     let mut collector = motion_calibration::CalibrationCollector::default();
     for (i, f) in out.iter().enumerate().skip(skip) {
@@ -645,6 +667,85 @@ fn calibration_runs() -> BTreeMap<String, LinkRuns> {
             }
         }
         out.insert(link.name.to_string(), runs);
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Still person by link and reflection strength (issue #56)
+// ---------------------------------------------------------------------------
+
+/// Reflection strengths a still person is checked at on each link: the
+/// standard scenarios' -15 dB and two weaker ones.
+const STILL_LINK_DB: [f64; 3] = [-15.0, -20.0, -25.0];
+
+/// The breathing evidence values a replay produced after `from`, one per
+/// spectral estimate (the detector refreshes it about once a second).
+fn fresh_evidence(out: &[FrameOut], from: usize) -> Vec<f64> {
+    let mut last = None;
+    let mut values = Vec::new();
+    for f in out.iter().skip(from) {
+        if last != Some(f.estimate_count) {
+            last = Some(f.estimate_count);
+            if let Some(e) = f.breathing_evidence {
+                values.push(e);
+            }
+        }
+    }
+    values
+}
+
+fn percentile_of(values: &mut [f64], p: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(f64::total_cmp);
+    values[((values.len() - 1) as f64 * p).round() as usize]
+}
+
+/// Issue #56 asked whether each link should get its own still-person
+/// thresholds from the empty-room calibration. This records what such a
+/// rule would have to work with: the enter-then-sit rooms of seed set 0 on
+/// each link and at each reflection strength, replayed with the link's
+/// calibrated presence threshold and today's still-person hold, and the
+/// breathing evidence the same rooms produce while empty.
+fn still_link_runs() -> BTreeMap<String, StillLinkResult> {
+    let mut out = BTreeMap::new();
+    let rooms: Vec<Scenario> = scenarios()
+        .into_iter()
+        .filter(|s| s.family == Family::EnterStill)
+        .collect();
+    for link in &LINKS {
+        let mut r = StillLinkResult {
+            rooms: rooms.len(),
+            ..StillLinkResult::default()
+        };
+        let mut evidence = Vec::new();
+        for base in &rooms {
+            let mut sc = base.clone();
+            sc.snr_db = link.snr_db;
+            sc.agc_db = link.agc_db;
+            sc.sto_ns = link.sto_ns;
+            let segment = calibration_segment(&sc);
+            let skip = (motion_calibration::DEFAULT_DELAY_SECS * sc.fs).round() as usize;
+            evidence.extend(fresh_evidence(&segment, skip));
+            let threshold = calibrate_segment(&sc, &segment)
+                .map_or(motion_calibration::DEFAULT_PRESENCE_THRESHOLD, |c| {
+                    c.presence_threshold
+                });
+            for db in STILL_LINK_DB {
+                sc.dyn_db = db;
+                let o =
+                    replay_with_threshold(&sc, &generate(&sc), &mut Timing::default(), threshold);
+                let at = |secs: f64| (secs * sc.fs).round() as usize;
+                let held = share_pct(&o, at(100.0), o.len()) >= HELD_SHARE_PCT
+                    && share_pct(&o, at(10.0), at(T_ENTER_SECS)) <= OCCUPIED_SHARE_PCT;
+                *r.held.entry(format!("{db:.0} dB")).or_default() += usize::from(held);
+            }
+        }
+        r.empty_evidence_p50 = round2(percentile_of(&mut evidence, 0.50));
+        r.empty_evidence_p99 = round2(percentile_of(&mut evidence, 0.99));
+        out.insert(link.name.to_string(), r);
     }
     out
 }
@@ -907,6 +1008,20 @@ struct FanResult {
     walk_in_rooms: usize,
 }
 
+/// A still person on one link (issue #56).
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
+struct StillLinkResult {
+    /// Enter-then-sit rooms held for 90% of 100-240 s with no false
+    /// presence before entry, keyed by reflection strength ("-15 dB").
+    held: BTreeMap<String, usize>,
+    /// Rooms per reflection strength.
+    rooms: usize,
+    /// Reported, not ratcheted: the breathing evidence the same rooms
+    /// produced while empty (their calibration segments).
+    empty_evidence_p50: f64,
+    empty_evidence_p99: f64,
+}
+
 /// The fans checked, as (label, reflection dB, blade-pass Hz).
 const FANS: [(&str, f64, f64); 4] = [
     ("typical box fan", -15.0, 4.2),
@@ -941,6 +1056,9 @@ struct Metrics {
     /// Rooms with a running fan, keyed by fan label (plan item 1.5).
     #[serde(default)]
     fans: BTreeMap<String, FanResult>,
+    /// A still person by link and reflection strength (issue #56).
+    #[serde(default)]
+    still_by_link: BTreeMap<String, StillLinkResult>,
 }
 
 fn share_pct(xs: &[FrameOut], from: usize, to: usize) -> f64 {
@@ -989,6 +1107,7 @@ fn score(runs: &[(Scenario, Vec<FrameOut>)]) -> Metrics {
         seed_sets: BTreeMap::new(),
         best_link: None,
         fans: BTreeMap::new(),
+        still_by_link: BTreeMap::new(),
     };
     let mut vitals_errors: BTreeMap<String, (Vec<f64>, usize, Vec<f64>, usize)> = BTreeMap::new();
     let mut chance = Vec::new();
@@ -1252,6 +1371,21 @@ fn regressions(now: &Metrics, base: &Metrics) -> Vec<String> {
                 b.still_person_held_without_false_presence,
                 b.walk_ins_caught
             ));
+        }
+    }
+    for (link, b) in &base.still_by_link {
+        let Some(n) = now.still_by_link.get(link) else {
+            bad.push(format!("still person on the {link} link: missing"));
+            continue;
+        };
+        for (db, &bv) in &b.held {
+            let nv = n.held.get(db).copied().unwrap_or(0);
+            if nv < bv {
+                bad.push(format!(
+                    "still person on the {link} link at {db}: held in {nv} of {} rooms (baseline {bv})",
+                    n.rooms
+                ));
+            }
         }
     }
     if let (Some(b), Some(n)) = (&base.best_link, &now.best_link) {
@@ -1623,6 +1757,55 @@ fn report_markdown(m: &Metrics, t: &Timing) -> String {
             "\nThe strong fan is stronger than the person's reflection; removing it would hide people, so it is reported and its rooms read occupied."
         );
     }
+    if !m.still_by_link.is_empty() {
+        let _ = writeln!(
+            r,
+            "\n### Still person by link and reflection strength (issue #56, SYNTHETIC)\n"
+        );
+        let _ = writeln!(
+            r,
+            "Enter-then-sit rooms of seed set 0, each with its link's calibrated presence threshold and the same still-person hold. \
+             A room counts when the person is held for at least {HELD_SHARE_PCT:.0}% of 100-240 s with no false presence before entry. \
+             The last column is the breathing evidence the same rooms produce while empty (their calibration segments).\n"
+        );
+        let header: Vec<String> = STILL_LINK_DB
+            .iter()
+            .map(|db| format!("Person at {db:.0} dB"))
+            .collect();
+        let _ = writeln!(
+            r,
+            "| Link | {} | Empty-room breathing evidence, median / 99th percentile |\n|---|{}---|",
+            header.join(" | "),
+            "---|".repeat(STILL_LINK_DB.len())
+        );
+        for link in &LINKS {
+            let Some(s) = m.still_by_link.get(link.name) else {
+                continue;
+            };
+            let cells: Vec<String> = STILL_LINK_DB
+                .iter()
+                .map(|db| {
+                    let held = s.held.get(&format!("{db:.0} dB")).copied().unwrap_or(0);
+                    format!("{held} of {}", s.rooms)
+                })
+                .collect();
+            let _ = writeln!(
+                r,
+                "| {} ({:.0} dB SNR) | {} | {:.1} / {:.1} |",
+                link.name,
+                link.snr_db,
+                cells.join(" | "),
+                s.empty_evidence_p50,
+                s.empty_evidence_p99
+            );
+        }
+        let _ = writeln!(
+            r,
+            "\nEmpty-room evidence barely changes from link to link, so a per-link still-person threshold taken from it would mostly \
+             follow the noise of one 60 s window. Where people are lost (the noisy link, the weakest reflections), a sitter's \
+             evidence overlaps the empty room's, which no threshold separates."
+        );
+    }
     if let Some(b) = &m.best_link {
         let _ = writeln!(r, "\n### Best-link mode (plan item 1.4, SYNTHETIC)\n");
         let _ = writeln!(
@@ -1864,6 +2047,7 @@ fn scenario_harness() {
     metrics.calibration = calibration_runs();
     metrics.best_link = Some(best_link_runs(0));
     metrics.fans = fan_runs();
+    metrics.still_by_link = still_link_runs();
     let report = report_markdown(&metrics, &timing) + &older_pipeline_comparison();
     eprintln!("{report}");
     if let Ok(path) = std::env::var("RUVIEW_SCENARIO_REPORT") {

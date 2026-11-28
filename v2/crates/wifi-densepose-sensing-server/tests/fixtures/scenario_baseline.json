@@ -567,5 +567,37 @@
       "walk_ins_caught": 5,
       "walk_in_rooms": 5
     }
+  },
+  "still_by_link": {
+    "clean": {
+      "held": {
+        "-15 dB": 5,
+        "-20 dB": 5,
+        "-25 dB": 4
+      },
+      "rooms": 5,
+      "empty_evidence_p50": 7.07,
+      "empty_evidence_p99": 11.14
+    },
+    "noisy": {
+      "held": {
+        "-15 dB": 0,
+        "-20 dB": 0,
+        "-25 dB": 0
+      },
+      "rooms": 5,
+      "empty_evidence_p50": 6.7,
+      "empty_evidence_p99": 11.62
+    },
+    "typical": {
+      "held": {
+        "-15 dB": 5,
+        "-20 dB": 4,
+        "-25 dB": 0
+      },
+      "rooms": 5,
+      "empty_evidence_p50": 6.9,
+      "empty_evidence_p99": 9.9
+    }
   }
 }

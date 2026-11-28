@@ -448,6 +448,16 @@ Someone reading or asleep barely moves, so their motion score looks like an empt
 
 SYNTHETIC results from the scenario harness: a still person is held for the whole 100–240 s window in all 30 walk-in-and-sit scenarios across six seed sets, and empty-room results are unchanged. These numbers are not yet MEASURED on hardware. The thresholds are a first guess that real-home recordings (plan items 2.4 and 2.5) will retune.
 
+How well a still person is held depends on the link and on how strongly the person reflects (SYNTHETIC, 5 walk-in-and-sit rooms each, with the link's calibrated threshold):
+
+| Link | Person at −15 dB | −20 dB | −25 dB |
+|---|---|---|---|
+| Clean (35 dB SNR) | 5 of 5 | 5 of 5 | 4 of 5 |
+| Typical (25 dB SNR) | 5 of 5 | 4 of 5 | 0 of 5 |
+| Noisy (12 dB SNR) | 0 of 5 | 0 of 5 | 0 of 5 |
+
+On a link that calibration flags as `noisy`, don't count on a person sitting still being detected; move the node or its antenna. An empty room's breathing evidence is about the same on every link (median about 7), so the thresholds above are not tuned per link (issue #56).
+
 #### Several nodes in one room: best-link mode
 
 A node only senses people whose movement crosses its path. A node that never sees anyone still gets a vote, and when the moving and still readings split between levels, it can outvote the node that does see them. By default the room verdict therefore follows a single node: the one whose motion swings furthest above its own quiet level (its **contrast**, the 99th percentile of its smoothed motion over its 10th).

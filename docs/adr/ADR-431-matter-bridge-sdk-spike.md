@@ -1,6 +1,6 @@
 # ADR-431: Matter bridge: try rs-matter in a presence-only spike before choosing the SDK (refines ADR-115 §3.11.3)
 
-- **Status**: proposed (fork; needs the maintainer's decision)
+- **Status**: proposed (fork; needs the maintainer's decision). Spike in progress: the bridge builds and starts; no controller has paired with it yet (see [Spike log](#spike-log)).
 - **Date**: 2026-11-27
 - **Deciders**: RuView maintainers; fork owner
 - **Tags**: matter, smart-home, alexa, bridge
@@ -102,6 +102,52 @@ enough.
   other people needs a CSA vendor ID and certification, which is out of scope.
 - Heart rate, breathing rate, pose and RSSI stay MQTT-only, as ADR-115 says.
 
+## Spike log
+
+### 2026-11-27: the bridge builds and starts
+
+**SDK version.** rs-matter **0.5.0** was released on 2026-11-27. It is used instead of 0.3.0 for two reasons:
+- Its repository has a bridge example: an Aggregator with Bridged Node endpoints, each with a `BridgedDeviceBasicInformation` server. That settles the "not confirmed" point above at the API level.
+- Its `MatterStack` runs an Ethernet/IP node in a few calls.
+
+The cost is that 0.5 needs **Rust 1.92**, and the workspace pins 1.89 (`v2/rust-toolchain.toml`). So the `matter` feature is built with `cargo +stable`, and CI runs it in its own job on stable (`.github/workflows/matter-bridge.yml`). The default build and the pin are unchanged. rs-matter 0.4.1 (Rust 1.87) also has the bridge example, but needs more hand-written transport and mDNS code. It is the fallback if the toolchain override becomes a problem.
+
+**Shape.** In process, behind the `matter` feature, as decided above.
+- `src/matter/runtime.rs` runs the Matter stack on its own thread with its own executor, so it never blocks the server's tokio runtime.
+- `src/matter/occupancy.rs` follows the server's own `sensing_update` broadcast, the same one the MQTT bridge reads. It shares one atomic room state with the Matter handlers, which poll it every 100 ms and notify subscribers on a change.
+- `src/matter/config.rs` checks the flags.
+
+**Endpoints.**
+- 0: root node.
+- 1: Aggregator.
+- 2: the room. Device types Occupancy Sensor (0x0107) + Bridged Node (0x0013). Clusters: Descriptor, Identify, Bridged Device Basic Information, and Occupancy Sensing.
+  - Occupancy Sensing advertises the `RFSensing` feature. The legacy sensor-type attributes say PIR, as the spec asks for sensors with none of the legacy modalities.
+  - Bridged Device Basic Information has `Reachable`, `UniqueID` and a writable `NodeLabel`.
+
+This replaces the tree drawn in `src/matter/bridge.rs` for the spike: that tree put the Aggregator on endpoint 0, which Matter reserves for the root node, and gave bridged endpoints Basic Information instead of Bridged Device Basic Information. `bridge.rs` is not wired to the SDK and is left for the full bridge.
+
+**Occupancy source.** The debounced room verdict (`classification.presence`, the value REST and WebSocket report). The room reports **unreachable**, and unoccupied, when:
+- the fused room aggregate says `unavailable` (ADR-297);
+- an update has no presence;
+- no update arrived for 10 s.
+
+**Flags.** `--matter`, `--matter-setup-file`, `--matter-reset`, `--matter-vendor-id` and `--matter-product-id` now reach the binary. A new `--matter-test-toggle-secs N` flips occupancy every N seconds and ignores sensing. It's a SYNTHETIC source for running the pass criteria before any sensing hardware exists: the simulated source's room stays occupied, so it can't trigger a routine. Before this, they existed only on the library's unused `cli::Args`, and the binary rejected `--matter`. Any vendor/product ID other than the bundled test attestation's `0xFFF1`/`0x8001` is refused at start, because it would fail device attestation.
+
+**Checked so far** (no controller involved):
+- Unit tests, which run in the new CI job:
+  - the occupancy feed, including staleness, lag and a closed broadcast;
+  - flag checks;
+  - the cluster metadata: RF-sensing feature, required attributes, and the endpoint and device-type layout;
+  - the setup codes: the manual code is the standard test code `3497-011-2332`.
+- A startup run with `--source simulated --matter` in the development sandbox:
+  - the commissioning window opens;
+  - the QR text and pairing code are logged, and written to the setup file with mode 0600;
+  - the stack then stops at the UDP bind, because the sandbox has **no IPv6** (`Address family not supported by protocol`), and the rest of the server keeps running.
+- So **commissioning could not be tried there**. That and every pass criterion above still need the fork owner's network, with captured logs.
+- `cargo audit` reports no new advisories or warnings from the 83 crates the optional dependency adds to `Cargo.lock`.
+  - Their licenses are permissive (Apache-2.0, MIT, BSD-3-Clause or ISC, alone or as a choice).
+  - The exceptions are three MPL-2.0 build-time crates of rs-matter's code generator. The lock already had MPL-2.0 crates.
+
 ## Alternatives considered
 
 | Option | For | Against |
@@ -114,6 +160,7 @@ enough.
 ## Sources
 
 - rs-matter 0.3.0 documentation: <https://docs.rs/crate/rs-matter/0.3.0>
+- rs-matter 0.5.0 bridge example: <https://github.com/project-chip/rs-matter/blob/v0.5.0/examples/src/bin/bridge.rs>
 - Amazon, ACK Matter tutorial, step 3 (commission with an Echo on a developer
   account): <https://developer.amazon.com/docs/alexaplus/ack/matter-tutorial-test-device.html>
 - Amazon, provisioning ACK Matter prototypes with test VID 0xFFF1:

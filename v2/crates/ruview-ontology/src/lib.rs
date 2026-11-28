@@ -185,7 +185,10 @@ mod tests {
         let container = sensor.located_in.clone();
         assert_eq!(g.zone_of(&container).unwrap().name, "Stove");
         assert_eq!(g.space_of(&container).unwrap().name, "Kitchen");
-        assert_eq!(g.space_of(&container).unwrap().area_id.as_deref(), Some("area-42"));
+        assert_eq!(
+            g.space_of(&container).unwrap().area_id.as_deref(),
+            Some("area-42")
+        );
         assert_eq!(g.floor_of(&container).unwrap().level, 0);
 
         // A person placed directly in the space has no zone but the same space.
@@ -344,6 +347,9 @@ mod tests {
                 name: "Dup".into(),
             })
             .unwrap_err();
-        assert!(matches!(err, OntologyError::Duplicate { kind: "space", .. }));
+        assert!(matches!(
+            err,
+            OntologyError::Duplicate { kind: "space", .. }
+        ));
     }
 }

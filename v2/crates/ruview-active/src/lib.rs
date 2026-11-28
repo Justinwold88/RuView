@@ -200,7 +200,8 @@ mod tests {
     // to the passive planner with no error and no fabricated gain.
     #[test]
     fn empty_capability_degrades_to_passive() {
-        let ctrl = ClosedLoopController::new(ControlCapability::none(), ControllerConfig::default());
+        let ctrl =
+            ClosedLoopController::new(ControlCapability::none(), ControllerConfig::default());
         let belief = ZoneBelief::new(zid("z"), Uncertainty::new(1.0), LastResponse::None);
         match ctrl.step(&belief) {
             ControlDecision::Passive { zone, reason } => {
@@ -321,10 +322,34 @@ mod tests {
         let mk = |cycle: u64| {
             ZoneBelief::new(zid("z"), Uncertainty::new(1.0), LastResponse::None).with_cycle(cycle)
         };
-        let c0 = ctrl.step(&mk(0)).proposal().unwrap().action.channel.unwrap();
-        let c1 = ctrl.step(&mk(1)).proposal().unwrap().action.channel.unwrap();
-        let c2 = ctrl.step(&mk(2)).proposal().unwrap().action.channel.unwrap();
-        let c3 = ctrl.step(&mk(3)).proposal().unwrap().action.channel.unwrap();
+        let c0 = ctrl
+            .step(&mk(0))
+            .proposal()
+            .unwrap()
+            .action
+            .channel
+            .unwrap();
+        let c1 = ctrl
+            .step(&mk(1))
+            .proposal()
+            .unwrap()
+            .action
+            .channel
+            .unwrap();
+        let c2 = ctrl
+            .step(&mk(2))
+            .proposal()
+            .unwrap()
+            .action
+            .channel
+            .unwrap();
+        let c3 = ctrl
+            .step(&mk(3))
+            .proposal()
+            .unwrap()
+            .action
+            .channel
+            .unwrap();
         assert_eq!(c0.number(), 36);
         assert_eq!(c1.number(), 40);
         assert_eq!(c2.number(), 44);
@@ -332,9 +357,15 @@ mod tests {
 
         // Exploiting (low uncertainty) anchors to the first channel regardless
         // of cycle.
-        let exploit = ZoneBelief::new(zid("z"), Uncertainty::new(0.0), LastResponse::None)
-            .with_cycle(2);
-        let ce = ctrl.step(&exploit).proposal().unwrap().action.channel.unwrap();
+        let exploit =
+            ZoneBelief::new(zid("z"), Uncertainty::new(0.0), LastResponse::None).with_cycle(2);
+        let ce = ctrl
+            .step(&exploit)
+            .proposal()
+            .unwrap()
+            .action
+            .channel
+            .unwrap();
         assert_eq!(ce.number(), 36);
     }
 

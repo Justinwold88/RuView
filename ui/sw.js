@@ -8,7 +8,9 @@
 // v3: the Sensing tab gained the empty-room calibration card (issue #52). The
 // shell is cache-first, so without a bump a browser that loaded the dashboard
 // before keeps the old SensingTab.js and never shows the card.
-const CACHE_NAME = 'ruview-v3';
+// v4: SensingTab.js connects to live data before loading Three.js, so the tab
+// keeps working when the CDN is unreachable.
+const CACHE_NAME = 'ruview-v4';
 
 // Requests whose response depends on the caller's credentials. These must never
 // be served from the Cache API.

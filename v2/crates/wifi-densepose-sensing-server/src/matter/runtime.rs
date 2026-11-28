@@ -60,7 +60,7 @@ use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
 
 use super::config::BridgeConfig;
-use super::occupancy::{spawn_feed, RoomOccupancy};
+use super::occupancy::{spawn_feed, spawn_test_pattern, RoomOccupancy};
 
 /// The aggregator endpoint.
 pub const AGGREGATOR_EP: EndptId = 1;
@@ -85,7 +85,19 @@ const ROOM_LABEL: &str = "RuView room";
 /// thread that runs the Matter stack. Call from inside the tokio runtime.
 pub fn start(cfg: BridgeConfig, rx: broadcast::Receiver<String>) -> std::io::Result<()> {
     let room = Arc::new(RoomOccupancy::default());
-    spawn_feed(rx, room.clone());
+    match cfg.test_toggle {
+        Some(period) => {
+            tracing::warn!(
+                "Matter: SYNTHETIC test pattern: room occupancy flips every {} s and ignores sensing",
+                period.as_secs()
+            );
+            drop(rx);
+            spawn_test_pattern(period, room.clone());
+        }
+        None => {
+            spawn_feed(rx, room.clone());
+        }
+    }
 
     std::thread::Builder::new()
         .name("matter-bridge".into())

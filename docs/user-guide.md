@@ -1064,6 +1064,7 @@ sensing-server --source esp32 --matter --matter-setup-file matter-setup.txt
 - To add a second controller, share the bridge from the first controller (multi-admin). The test code only works while nothing is paired.
 - `--matter-reset` forgets every paired controller. The bridge keeps its pairings in `matter/` under `--data-dir`.
 - `--privacy-mode` doesn't turn the bridge off, because occupancy isn't biometric.
+- **No sensing hardware yet?** `--matter-test-toggle-secs 30` ignores sensing and flips the room between vacant and occupied every 30 seconds (2 to 3600). That tests pairing, reporting and routines, not sensing. The log says `SYNTHETIC test pattern`, so you can tell it apart from real data. The simulated source (`--source simulated`) isn't enough for this, because its room stays occupied.
 
 **Network requirements.**
 - Matter needs **IPv6** on the host and the LAN, and **mDNS** (UDP 5353). The bridge listens on UDP **5540**.

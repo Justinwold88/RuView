@@ -2707,6 +2707,10 @@ mod privacy_mode_surface_tests {
             Some(std::path::Path::new("/tmp/setup.txt"))
         );
         assert!(!on.privacy_mode, "--matter must not imply --privacy-mode");
+        assert_eq!(on.matter_opts.matter_test_toggle_secs, None);
+        let t = Args::parse_from(["sensing-server", "--matter-test-toggle-secs", "30"]);
+        assert_eq!(t.matter_opts.matter_test_toggle_secs, Some(30));
+        assert!(Args::try_parse_from(["sensing-server", "--matter-test-toggle-secs", "1"]).is_err());
     }
 
     #[tokio::test]

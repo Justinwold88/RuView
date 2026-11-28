@@ -4,7 +4,9 @@
   room, which follows the debounced room verdict and reports unreachable when
   no fresh source backs it. The `--matter*` flags now reach the binary (it
   used to reject `--matter`), and `--matter-setup-file` writes the test setup
-  codes. It uses the CSA test vendor ID and test credentials. rs-matter 0.5
+  codes, and `--matter-test-toggle-secs` flips occupancy on a SYNTHETIC
+  schedule for pairing tests without sensing hardware. It uses the CSA test
+  vendor ID and test credentials. rs-matter 0.5
   needs Rust 1.92, so the feature builds with `cargo +stable`, and a new CI
   job (`matter-bridge.yml`) tests it. No controller has paired with it yet:
   the development sandbox has no IPv6, so pairing needs a real network.

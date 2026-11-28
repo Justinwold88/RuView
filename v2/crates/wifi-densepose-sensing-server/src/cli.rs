@@ -141,6 +141,11 @@ pub struct MatterArgs {
     /// Matter product ID. Only the test product 0x8001 is supported (ADR-431)
     #[arg(long, default_value = "0x8001")]
     pub matter_product_id: String,
+
+    /// SYNTHETIC pairing test without sensing hardware: ignore sensing and
+    /// flip the room's Matter occupancy every SECS seconds (2-3600)
+    #[arg(long, value_name = "SECS", value_parser = clap::value_parser!(u64).range(2..=3600))]
+    pub matter_test_toggle_secs: Option<u64>,
 }
 
 /// CLI arguments for the sensing server.

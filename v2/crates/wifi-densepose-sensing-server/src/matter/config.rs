@@ -4,6 +4,7 @@
 //! feature.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::cli::MatterArgs;
 
@@ -21,6 +22,9 @@ pub struct BridgeConfig {
     pub reset: bool,
     /// Where to write the setup code while the bridge isn't paired.
     pub setup_file: Option<PathBuf>,
+    /// SYNTHETIC test pattern: flip occupancy at this period instead of
+    /// following sensing (`--matter-test-toggle-secs`).
+    pub test_toggle: Option<Duration>,
 }
 
 impl BridgeConfig {
@@ -62,6 +66,7 @@ impl BridgeConfig {
             storage_dir: data_dir.join("matter"),
             reset: args.matter_reset,
             setup_file: args.matter_setup_file.clone(),
+            test_toggle: args.matter_test_toggle_secs.map(Duration::from_secs),
         })
     }
 }
@@ -86,6 +91,7 @@ mod tests {
             matter_reset: false,
             matter_vendor_id: vid.into(),
             matter_product_id: pid.into(),
+            matter_test_toggle_secs: None,
         }
     }
 
@@ -105,6 +111,15 @@ mod tests {
         assert_eq!(cfg.storage_dir, Path::new("/data/matter"));
         assert!(!cfg.reset);
         assert_eq!(cfg.setup_file, None);
+        assert_eq!(cfg.test_toggle, None);
+    }
+
+    #[test]
+    fn test_toggle_is_carried_as_a_duration() {
+        let mut a = args("0xFFF1", "0x8001");
+        a.matter_test_toggle_secs = Some(30);
+        let cfg = BridgeConfig::from_args(&a, Path::new("/d")).unwrap();
+        assert_eq!(cfg.test_toggle, Some(Duration::from_secs(30)));
     }
 
     #[test]

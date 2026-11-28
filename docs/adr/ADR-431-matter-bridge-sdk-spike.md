@@ -131,7 +131,7 @@ This replaces the tree drawn in `src/matter/bridge.rs` for the spike: that tree 
 - an update has no presence;
 - no update arrived for 10 s.
 
-**Flags.** `--matter`, `--matter-setup-file`, `--matter-reset`, `--matter-vendor-id` and `--matter-product-id` now reach the binary. Before this, they existed only on the library's unused `cli::Args`, and the binary rejected `--matter`. Any vendor/product ID other than the bundled test attestation's `0xFFF1`/`0x8001` is refused at start, because it would fail device attestation.
+**Flags.** `--matter`, `--matter-setup-file`, `--matter-reset`, `--matter-vendor-id` and `--matter-product-id` now reach the binary. A new `--matter-test-toggle-secs N` flips occupancy every N seconds and ignores sensing. It's a SYNTHETIC source for running the pass criteria before any sensing hardware exists: the simulated source's room stays occupied, so it can't trigger a routine. Before this, they existed only on the library's unused `cli::Args`, and the binary rejected `--matter`. Any vendor/product ID other than the bundled test attestation's `0xFFF1`/`0x8001` is refused at start, because it would fail device attestation.
 
 **Checked so far** (no controller involved):
 - Unit tests, which run in the new CI job:

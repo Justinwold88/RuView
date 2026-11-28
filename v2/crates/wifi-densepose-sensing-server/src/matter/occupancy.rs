@@ -120,6 +120,24 @@ pub fn spawn_feed(
     })
 }
 
+/// SYNTHETIC test pattern for trying a controller without sensing hardware:
+/// the room starts vacant and flips every `period`, ignoring sensing. Runs
+/// until aborted. Call from inside the tokio runtime.
+pub fn spawn_test_pattern(
+    period: Duration,
+    room: Arc<RoomOccupancy>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut occupied = false;
+        let mut tick = tokio::time::interval(period);
+        loop {
+            tick.tick().await;
+            room.set(Some(occupied));
+            occupied = !occupied;
+        }
+    })
+}
+
 /// The occupancy one `sensing_update` reports, or `None` if it can't say.
 fn occupancy_of(v: &Value) -> Option<bool> {
     if v["room_inference"]["classification"].as_str() == Some("unavailable") {
@@ -237,6 +255,25 @@ mod tests {
         drop(tx);
         task.await.unwrap();
         assert_eq!(room.get(), None, "a closed broadcast is unavailable");
+    }
+
+    #[tokio::test]
+    async fn test_pattern_starts_vacant_and_flips() {
+        let room = Arc::new(RoomOccupancy::default());
+        let task = spawn_test_pattern(Duration::from_millis(40), room.clone());
+        let mut seen = Vec::new();
+        for _ in 0..100 {
+            let v = room.get();
+            if seen.last() != Some(&v) {
+                seen.push(v);
+            }
+            if seen.len() >= 4 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        task.abort();
+        assert_eq!(seen, vec![None, Some(false), Some(true), Some(false)]);
     }
 
     #[test]

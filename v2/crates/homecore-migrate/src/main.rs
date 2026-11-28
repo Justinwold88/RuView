@@ -62,9 +62,7 @@ fn main() -> anyhow::Result<()> {
             let entity_path = args.storage.join("core.entity_registry");
             let entries = homecore_migrate::entity_registry::read_entity_registry(&entity_path)?;
             let destination = homecore_migrate::entity_registry::write_entity_registry_with(
-                &args.to,
-                &entries,
-                args.force,
+                &args.to, &entries, args.force,
             )?;
             print_summary(&ImportSummary {
                 kind: "entity_registry",
@@ -79,9 +77,7 @@ fn main() -> anyhow::Result<()> {
             let device_path = args.storage.join("core.device_registry");
             let devices = homecore_migrate::device_registry::read_device_registry(&device_path)?;
             let destination = homecore_migrate::device_registry::write_device_registry_with(
-                &args.to,
-                &devices,
-                args.force,
+                &args.to, &devices, args.force,
             )?;
             print_summary(&ImportSummary {
                 kind: "device_registry",
@@ -114,9 +110,7 @@ fn main() -> anyhow::Result<()> {
                 .map(serde_json::to_value)
                 .collect::<Result<Vec<_>, _>>()?;
             let destination = homecore_migrate::config_entries::write_config_entries_with(
-                &args.to,
-                &converted,
-                args.force,
+                &args.to, &converted, args.force,
             )?;
             print_summary(&ImportSummary {
                 kind: "config_entries",

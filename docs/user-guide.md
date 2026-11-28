@@ -1034,7 +1034,44 @@ Presence, motion, person count, zones and the coarse posture label are still ser
 
 ### Matter Bridge (Apple Home / Google Home / Alexa / SmartThings)
 
-Not available yet. The `--matter` and `--matter-setup-file` flags from ADR-115 are defined in the crate's library CLI, but the `sensing-server` binary doesn't accept them (`error: unexpected argument '--matter' found`), so there's no way to start the Matter bridge today. Use the MQTT integration above for Home Assistant in the meantime. For Alexa, see [Alexa (through Home Assistant)](integrations/home-assistant.md#alexa-through-home-assistant).
+**Experimental, and not paired with any controller yet.** This is the spike from [ADR-431](adr/ADR-431-matter-bridge-sdk-spike.md). For everyday use, use the MQTT integration above. For Alexa, see [Alexa (through Home Assistant)](integrations/home-assistant.md#alexa-through-home-assistant).
+
+What the bridge exposes:
+- One Matter bridge with one occupancy sensor for the room. Its occupancy follows the same debounced room verdict that `/api/v1/sensing/latest` reports as `classification.presence`.
+- While no fresh sensing source backs the room, the sensor reports **unreachable** rather than a frozen last value.
+- Nothing else. No heart rate, breathing rate, pose, person count, zones or falls.
+
+It's built on [rs-matter](https://github.com/project-chip/rs-matter) 0.5.0, which is not certified. It uses the CSA **test** vendor ID (`0xFFF1`) and test device credentials, so it's for trying out on your own network only.
+
+**Build it.** The bridge is behind the `matter` cargo feature. rs-matter 0.5 needs Rust 1.92 or newer, and the workspace pins 1.89 (`v2/rust-toolchain.toml`), so build with stable:
+
+```bash
+rustup toolchain install stable
+cd v2
+cargo +stable build --release -p wifi-densepose-sensing-server --features matter
+```
+
+A binary built without the feature accepts `--matter`, logs a warning and doesn't start the bridge.
+
+**Run it.**
+
+```bash
+sensing-server --source esp32 --matter --matter-setup-file matter-setup.txt
+```
+
+- On first start, the log shows `SetupQRCode: [MT:...]` and `PairingCode: [3497-011-2332]`, and `--matter-setup-file` writes both to the file. These are the standard Matter test codes.
+- Pair from a Matter controller, using "add device" with the code. Pairing works on the local network only (no Bluetooth).
+- To add a second controller, share the bridge from the first controller (multi-admin). The test code only works while nothing is paired.
+- `--matter-reset` forgets every paired controller. The bridge keeps its pairings in `matter/` under `--data-dir`.
+- `--privacy-mode` doesn't turn the bridge off, because occupancy isn't biometric.
+
+**Network requirements.**
+- Matter needs **IPv6** on the host and the LAN, and **mDNS** (UDP 5353). The bridge listens on UDP **5540**.
+- The bridge runs its own mDNS responder. On Linux, stop Avahi (or any other responder on port 5353) first.
+- Under WSL 2's default NAT networking, multicast doesn't reach the LAN. Run the bridge natively on Windows, in WSL's mirrored networking mode, or in a VM on a bridged network.
+- If the host has no IPv6, the log shows `Matter bridge stopped: StdIoError: Address family not supported by protocol`, and the rest of the server keeps running.
+
+**Alexa.** Amazon's prototyping guide pairs test-vendor-ID devices only when the Echo and the Alexa app are signed in to the same (free) Amazon developer account. Whether an Echo accepts this bridge is what the spike is testing.
 
 Detailed entity reference, blueprint catalog, troubleshooting recipe matrix: see [`docs/integrations/home-assistant.md`](integrations/home-assistant.md).
 

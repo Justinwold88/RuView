@@ -29,12 +29,26 @@
 //! would expand `EntityKind::matter_mapping` to cover them. Today HR /
 //! BR have no Matter cluster and stay MQTT-only.
 
+//!
+//! ## ADR-431 spike
+//!
+//! With the `matter` feature, [`runtime`] runs a presence-only bridge on
+//! `rs-matter`: an Aggregator and one occupancy endpoint for the room. Its
+//! endpoint layout is in that module. The tree in `bridge.rs` is the fuller
+//! ADR-115 design and is not wired to the SDK yet.
+
 mod bridge;
 mod clusters;
 mod commissioning;
+pub mod config;
+pub mod occupancy;
+#[cfg(feature = "matter")]
+pub mod runtime;
 
 pub use bridge::{build_bridge_tree, BridgeTree, Endpoint, EndpointRef, NodeBranch};
 pub use clusters::{
     matter_mapping, ClusterId, EndpointTypeId, MatterClusterMapping,
 };
 pub use commissioning::{DecodedManualCode, ManualPairingCode, SetupCodeInput};
+pub use config::BridgeConfig;
+pub use occupancy::{OccupancyFeed, RoomOccupancy};

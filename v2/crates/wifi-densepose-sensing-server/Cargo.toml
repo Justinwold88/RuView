@@ -118,6 +118,18 @@ rand = "0.8"
 # uses rustls).
 rumqttc   = { package = "rumqttc-v4-next", version = "0.34", default-features = false, features = ["use-rustls-ring"], optional = true }
 
+# ADR-431 — Matter bridge spike on rs-matter (pure Rust, Apache-2.0, not
+# certified). Behind the `matter` feature; none of these build by default.
+# rs-matter is pinned exactly because its API is not stable yet. The rest are
+# what its std examples use to run it: an executor (`futures-lite`), the
+# embassy timer driver for std, and a `rand` 0.10 RNG for its crypto backend
+# (the crate's own `rand` above is 0.8).
+rs-matter = { version = "=0.5.0", default-features = false, features = ["os", "rustcrypto", "log", "async-io"], optional = true }
+futures-lite = { version = "2", optional = true }
+embassy-time = { version = "0.5", features = ["std"], optional = true }
+embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"], optional = true }
+rand_010 = { package = "rand", version = "0.10", default-features = false, features = ["std", "std_rng", "sys_rng", "thread_rng"], optional = true }
+
 # `otel` feature — OTLP log export (`telemetry` module). Same gating
 # principle as `mqtt`: the heavy exporter stack (opentelemetry SDK +
 # tonic) stays out of the default binary; with the feature built,
@@ -143,10 +155,9 @@ mqtt = ["dep:rumqttc"]
 # RUVIEW_FANN_SHADOW_LOG is set.
 fann-shadow = ["dep:ruview-fann-head"]
 # ADR-115 §3.11 — Matter Bridge (HA-FABRIC). Same gating principle: flags
-# parse unconditionally; the bridge is a no-op without this feature.
-# matter-rs is added in P7; intentionally absent in P1 to keep the dep
-# surface small until the SDK choice is validated.
-matter = []
+# parse unconditionally; without this feature `--matter` warns and does
+# nothing. ADR-431: with it, a presence-only rs-matter bridge (spike).
+matter = ["dep:rs-matter", "dep:futures-lite", "dep:embassy-time", "dep:embassy-time-queue-utils", "dep:rand_010"]
 
 [dev-dependencies]
 tempfile = "3.10"

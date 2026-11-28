@@ -116,6 +116,33 @@ pub struct MqttArgs {
     pub mqtt_rate_pose: f64,
 }
 
+/// Matter bridge flags (ADR-115 §3.11, ADR-431 spike), flattened into the
+/// binary's `main::Args` like [`MqttArgs`]. The flags always parse; without
+/// the `matter` cargo feature, `--matter` logs a warning and does nothing.
+#[derive(clap::Args, Debug, Clone)]
+pub struct MatterArgs {
+    /// Start the Matter bridge (presence only; needs the `matter` feature)
+    #[arg(long, env = "RUVIEW_MATTER", value_parser = parse_env_bool)]
+    pub matter: bool,
+
+    /// Write the Matter setup code and QR text to this file while the bridge
+    /// is not paired yet
+    #[arg(long, env = "RUVIEW_MATTER_SETUP_FILE", value_name = "PATH")]
+    pub matter_setup_file: Option<PathBuf>,
+
+    /// Forget every paired Matter controller before starting
+    #[arg(long)]
+    pub matter_reset: bool,
+
+    /// Matter vendor ID. Only the CSA test ID 0xFFF1 is supported (ADR-431)
+    #[arg(long, default_value = "0xFFF1")]
+    pub matter_vendor_id: String,
+
+    /// Matter product ID. Only the test product 0x8001 is supported (ADR-431)
+    #[arg(long, default_value = "0x8001")]
+    pub matter_product_id: String,
+}
+
 /// CLI arguments for the sensing server.
 #[derive(Parser, Debug)]
 #[command(name = "sensing-server", about = "WiFi-DensePose sensing server")]

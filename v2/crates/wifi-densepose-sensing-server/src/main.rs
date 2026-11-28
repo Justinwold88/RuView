@@ -252,6 +252,11 @@ struct Args {
     #[command(flatten)]
     mqtt_opts: wifi_densepose_sensing_server::cli::MqttArgs,
 
+    /// Matter bridge flags (ADR-115 §3.11, ADR-431 spike). Flattened like
+    /// `mqtt_opts`; the bridge needs the `matter` cargo feature.
+    #[command(flatten)]
+    matter_opts: wifi_densepose_sensing_server::cli::MatterArgs,
+
     /// Data source: auto, esp32, wifi, mediatek, simulated (alias: simulate)
     #[arg(long, default_value = "auto", value_parser = SOURCE_VALUES)]
     source: String,
@@ -2678,6 +2683,30 @@ mod privacy_mode_surface_tests {
         let args = Args::parse_from(["sensing-server", "--privacy-mode"]);
         assert!(args.privacy_mode);
         assert!(!args.mqtt_opts.mqtt, "--privacy-mode must not imply --mqtt");
+    }
+
+    /// ADR-431: the Matter flags reach the binary's parser (they used to
+    /// exist only on the library's `Args`, so `--matter` was rejected).
+    #[test]
+    fn matter_flags_reach_the_binary() {
+        let off = Args::parse_from(["sensing-server"]);
+        assert!(!off.matter_opts.matter);
+        assert_eq!(off.matter_opts.matter_vendor_id, "0xFFF1");
+        assert_eq!(off.matter_opts.matter_product_id, "0x8001");
+        let on = Args::parse_from([
+            "sensing-server",
+            "--matter",
+            "--matter-reset",
+            "--matter-setup-file",
+            "/tmp/setup.txt",
+        ]);
+        assert!(on.matter_opts.matter);
+        assert!(on.matter_opts.matter_reset);
+        assert_eq!(
+            on.matter_opts.matter_setup_file.as_deref(),
+            Some(std::path::Path::new("/tmp/setup.txt"))
+        );
+        assert!(!on.privacy_mode, "--matter must not imply --privacy-mode");
     }
 
     #[tokio::test]
@@ -16027,6 +16056,31 @@ async fn main() {
             "--mqtt set but this binary was built without the `mqtt` feature; the publisher is a \
              no-op. Use the official Docker image (built `--features mqtt`) or rebuild with \
              `cargo build -p wifi-densepose-sensing-server --features mqtt`."
+        );
+    }
+
+    // ADR-431 spike: a presence-only Matter bridge on rs-matter. It reads the
+    // room verdict from the same JSON broadcast as the MQTT bridge. Occupancy
+    // is not biometric, so `--privacy-mode` leaves it on.
+    if args.matter_opts.matter {
+        #[cfg(feature = "matter")]
+        {
+            use wifi_densepose_sensing_server::matter;
+            match matter::BridgeConfig::from_args(&args.matter_opts, &data_dir) {
+                Ok(mcfg) => match matter::runtime::start(mcfg, tx.subscribe()) {
+                    Ok(()) => tracing::info!(
+                        "Matter bridge starting (ADR-431 spike: test credentials, presence only)"
+                    ),
+                    Err(e) => tracing::error!("Matter bridge thread not started: {e}"),
+                },
+                Err(e) => tracing::error!("Matter bridge not started: {e}"),
+            }
+        }
+        #[cfg(not(feature = "matter"))]
+        tracing::warn!(
+            "--matter set but this binary was built without the `matter` feature; the bridge is \
+             a no-op. Rebuild with `cargo +stable build -p wifi-densepose-sensing-server \
+             --features matter` (rs-matter needs Rust 1.92 or newer)."
         );
     }
 

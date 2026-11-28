@@ -1,0 +1,81 @@
+name: Matter bridge (ADR-431 spike)
+
+# The Matter bridge is behind the optional `matter` feature, so the default
+# workspace run never compiles rs-matter. This job builds and tests it.
+#
+# rs-matter 0.5 needs Rust 1.92, newer than the 1.89 pin in
+# v2/rust-toolchain.toml, so this job overrides the pin with stable. That is
+# also why it is its own job: a second toolchain's build would double the
+# target directory of the workspace job.
+#
+# These are unit tests. They are not evidence that any controller can pair
+# with the bridge; ADR-431's pass criteria need real controllers and logs.
+
+on:
+  pull_request:
+    paths:
+      - 'v2/crates/wifi-densepose-sensing-server/src/**'
+      - 'v2/crates/wifi-densepose-sensing-server/Cargo.toml'
+      - 'v2/Cargo.lock'
+      - '.github/workflows/matter-bridge.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'v2/crates/wifi-densepose-sensing-server/src/**'
+      - 'v2/crates/wifi-densepose-sensing-server/Cargo.toml'
+      - 'v2/Cargo.lock'
+      - '.github/workflows/matter-bridge.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: matter-bridge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matter-bridge:
+    name: Matter bridge (feature build + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      # Overrides v2/rust-toolchain.toml (see the note above).
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          # The v2 workspace lists submodule crates as members.
+          submodules: recursive
+
+      - name: Install system libraries (openssl-sys)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libssl-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: v2 -> target
+          key: matter-bridge
+
+      - name: Matter unit tests (library, `matter` feature)
+        working-directory: v2
+        run: >-
+          cargo test --locked -p wifi-densepose-sensing-server
+          --features matter --lib matter::
+
+      - name: Server binary builds with the `matter` feature
+        working-directory: v2
+        run: >-
+          cargo check --locked -p wifi-densepose-sensing-server
+          --features matter --bin sensing-server

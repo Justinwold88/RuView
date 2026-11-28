@@ -321,10 +321,7 @@ mod tests {
     fn synthetic_cannot_alias_to_measured() {
         let obs = csi_adapter().normalize(good_csi(), &ctx());
         assert!(obs.is_synthetic());
-        assert_eq!(
-            obs.provenance().calibration_version,
-            SYNTHETIC_CALIBRATION
-        );
+        assert_eq!(obs.provenance().calibration_version, SYNTHETIC_CALIBRATION);
         assert!(obs.evidence_level() < EvidenceLevel::L2);
         assert_ne!(obs.evidence_level(), EvidenceLevel::L4);
         assert_ne!(obs.evidence_level(), EvidenceLevel::L5);

@@ -15,7 +15,9 @@
 //! SYNTHETIC / L0: they prove the abstraction, not a fielded device, and make
 //! no MEASURED claim (CLAUDE.md; ADR-320 "Category and honesty discipline").
 
-use ruview_ontology::{Container, EvidenceLevel, Observation, ObservationId, SemanticProvenance, SensorId};
+use ruview_ontology::{
+    Container, EvidenceLevel, Observation, ObservationId, SemanticProvenance, SensorId,
+};
 
 use crate::descriptor::{SamplingSpec, SensorDescriptor};
 use crate::label::CapabilityTag;
@@ -136,7 +138,8 @@ impl SensorHal for SyntheticCsiAdapter {
     }
 
     fn normalize(&self, raw: Self::Raw, ctx: &NormalizeCtx) -> HalObservation {
-        let observation = synthetic_observation(self.sensor_id.clone(), ctx, "synthetic-csi-adapter@0");
+        let observation =
+            synthetic_observation(self.sensor_id.clone(), ctx, "synthetic-csi-adapter@0");
 
         // Boundary validation: empty, mismatched, over-bounded, or non-finite
         // input degrades to UNKNOWN rather than panicking or fabricating a
@@ -206,9 +209,14 @@ impl SensorHal for SyntheticImuAdapter {
     }
 
     fn normalize(&self, raw: Self::Raw, ctx: &NormalizeCtx) -> HalObservation {
-        let observation = synthetic_observation(self.sensor_id.clone(), ctx, "synthetic-imu-adapter@0");
+        let observation =
+            synthetic_observation(self.sensor_id.clone(), ctx, "synthetic-imu-adapter@0");
 
-        let finite = raw.accel.iter().chain(raw.gyro.iter()).all(|v| v.is_finite());
+        let finite = raw
+            .accel
+            .iter()
+            .chain(raw.gyro.iter())
+            .all(|v| v.is_finite());
 
         let uncertainty = if !finite {
             Uncertainty::degraded()

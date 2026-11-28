@@ -135,7 +135,10 @@ mod domain_state_adapter_tests {
 
     #[test]
     fn known_maps_to_known() {
-        assert_eq!(DomainState::from(ruview_ood::DomainState::Known), DomainState::Known);
+        assert_eq!(
+            DomainState::from(ruview_ood::DomainState::Known),
+            DomainState::Known
+        );
     }
 
     #[test]

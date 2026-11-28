@@ -1312,8 +1312,11 @@ mod tests {
         src.unflatten_weights(&det).unwrap();
         let src_emb = src.extract(&csi);
 
-        let path = std::env::temp_dir()
-            .join(format!("aether_wtest_{}_{:p}.bin", std::process::id(), &ext));
+        let path = std::env::temp_dir().join(format!(
+            "aether_wtest_{}_{:p}.bin",
+            std::process::id(),
+            &ext
+        ));
         src.save_weights(&path).unwrap();
 
         // Load into the random-init extractor.
@@ -1333,7 +1336,10 @@ mod tests {
 
         // (2) It matches the source extractor whose weights we saved (round-trip).
         for (a, b) in src_emb.iter().zip(&loaded_emb) {
-            assert!((a - b).abs() < 1e-6, "loaded embedding != source: {a} vs {b}");
+            assert!(
+                (a - b).abs() < 1e-6,
+                "loaded embedding != source: {a} vs {b}"
+            );
         }
 
         // (3) The weights are bit-identical after the file round-trip.

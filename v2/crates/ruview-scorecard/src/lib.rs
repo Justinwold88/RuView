@@ -623,12 +623,8 @@ impl Scorecard {
         out.push_str(
             "  (per-domain; pooled accuracy is never sufficient for promotion, ADR-300 §4)\n",
         );
-        out.push_str(
-            "  slice                     point   ci_low  ci_high  level  samples\n",
-        );
-        out.push_str(
-            "  ------------------------- ------- ------- -------- ------ -------\n",
-        );
+        out.push_str("  slice                     point   ci_low  ci_high  level  samples\n");
+        out.push_str("  ------------------------- ------- ------- -------- ------ -------\n");
         for slice in SliceId::ALL {
             let cell = self.cell(slice);
             match cell {
@@ -916,7 +912,11 @@ mod tests {
         // p=1.0, n=10, z=1.96: Wilson lower bound ≈ 0.7225, upper clamps to 1.0.
         let m = Metric::with_confidence(1.0, 10, EvidenceLevel::L0, 1.96).unwrap();
         assert!((m.ci_low() - 0.7225).abs() < 1e-3, "lo={}", m.ci_low());
-        assert!(m.ci_high() <= 1.0 && m.ci_high() > 0.999, "hi={}", m.ci_high());
+        assert!(
+            m.ci_high() <= 1.0 && m.ci_high() > 0.999,
+            "hi={}",
+            m.ci_high()
+        );
     }
 
     #[test]
@@ -965,7 +965,10 @@ mod tests {
 
     #[test]
     fn synthetic_metric_is_l0_by_construction() {
-        assert_eq!(Metric::synthetic(0.9, 100).unwrap().level(), EvidenceLevel::L0);
+        assert_eq!(
+            Metric::synthetic(0.9, 100).unwrap().level(),
+            EvidenceLevel::L0
+        );
     }
 
     #[test]
@@ -1128,8 +1131,7 @@ mod tests {
         // JSON round-trip reproduces the same rendered scorecard. (Rendering
         // fixes precision at 4 decimals; the ADR-149 hash binding hashes the
         // reproducible reporting form, not raw f64 bits.)
-        let back: Scorecard =
-            serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+        let back: Scorecard = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
         assert_eq!(back.render(), a.render());
     }
 

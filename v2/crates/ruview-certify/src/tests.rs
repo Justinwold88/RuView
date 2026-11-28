@@ -11,12 +11,12 @@ use ruview_evidence::{
     AccuracyMetrics, EvidenceContext, EvidenceLedger, EvidenceLevel as EvLevel, EvidenceRecord,
 };
 use ruview_ontology::SpaceId;
+use wifi_densepose_calibration::extract::AnchorFeature;
+use wifi_densepose_calibration::AnchorLabel;
 use wifi_densepose_calibration::{
     CalibrationCertificate, CalibrationTier, CharacterizationSource, CompatibilityEnvelope,
     EvidenceLevel as CalibLevel, KeyedHashSigner, MintParams, SpecialistBank,
 };
-use wifi_densepose_calibration::extract::AnchorFeature;
-use wifi_densepose_calibration::AnchorLabel;
 
 const ROOM: &str = "kitchen";
 const DEVICE: &str = "dev-1";
@@ -32,7 +32,9 @@ fn calibration(captured_at: i64, validity: i64) -> CalibrationCertificate {
     let anchors = vec![AnchorFeature::from_series(
         ROOM,
         AnchorLabel::Empty,
-        &[0.0, 0.1, 0.0, 0.1, 0.0, 0.1, 0.0, 0.1, 0.0, 0.1, 0.0, 0.1, 0.0, 0.1, 0.0, 0.1],
+        &[
+            0.0, 0.1, 0.0, 0.1, 0.0, 0.1, 0.0, 0.1, 0.0, 0.1, 0.0, 0.1, 0.0, 0.1, 0.0, 0.1,
+        ],
         20.0,
     )];
     let bank = SpecialistBank::train(ROOM, "base-1", &anchors, captured_at).unwrap();

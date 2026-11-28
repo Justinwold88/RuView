@@ -88,14 +88,17 @@ def hour_key(ns):
 
 
 class HourlyJsonl:
-    def __init__(self, root):
-        self.root = root
-        self.manifest = open(root / "outputs-manifest.jsonl", "a")
+    """One JSON-lines file per UTC hour under <root>/<subdir>/<day>/; each closed
+    file's SHA-256 goes in <root>/<manifest>."""
+
+    def __init__(self, root, subdir="outputs", manifest="outputs-manifest.jsonl"):
+        self.root, self.subdir = root, subdir
+        self.manifest = open(root / manifest, "a")
         self.key = self.stream = None
 
     def _open(self, ns):
         day, name = hour_key(ns)
-        directory = self.root / "outputs" / day
+        directory = self.root / self.subdir / day
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         for restart in range(100):
             stem = name if restart == 0 else f"{name}-r{restart}"

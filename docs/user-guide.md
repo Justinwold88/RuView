@@ -11,7 +11,7 @@ WiFi DensePose turns commodity WiFi signals into real-time human pose estimation
    - [Docker (Recommended)](#docker-recommended)
    - [From Source (Rust)](#from-source-rust)
    - [From crates.io](#from-cratesio-individual-crates)
-   - [From Source (Python)](#from-source-python)
+   - [Python wheel (pip)](#python-wheel-pip--adr-117)
    - [Guided Installer](#guided-installer)
 3. [Quick Start](#quick-start)
    - [30-Second Demo (Docker)](#30-second-demo-docker)
@@ -46,7 +46,7 @@ WiFi DensePose turns commodity WiFi signals into real-time human pose estimation
 14. [Training a Model](#training-a-model)
     - [CRV Signal-Line Protocol](#crv-signal-line-protocol)
 14. [RVF Model Containers](#rvf-model-containers)
-14. [Perception Certificate Spine (Developer Preview, ADR-300)](#perception-certificate-spine-developer-preview-adr-297)
+14. [Perception Certificate Spine (Developer Preview, ADR-300)](#perception-certificate-spine-developer-preview-adr-300)
 14. [Hardware Setup](#hardware-setup)
     - [ESP32-S3 Mesh](#esp32-s3-mesh)
     - [Intel 5300 / Atheros NIC](#intel-5300--atheros-nic)
@@ -1043,7 +1043,7 @@ What the bridge exposes:
 
 It's built on [rs-matter](https://github.com/project-chip/rs-matter) 0.5.0, which is not certified. It uses the CSA **test** vendor ID (`0xFFF1`) and test device credentials, so it's for trying out on your own network only.
 
-**Build it.** The bridge is behind the `matter` cargo feature. rs-matter 0.5 needs Rust 1.92 or newer, and the workspace pins 1.89 (`v2/rust-toolchain.toml`), so build with stable:
+**Build it.** The bridge is behind the `matter` cargo feature. rs-matter 0.5 needs Rust 1.92 or newer, and the workspace pins 1.89 (`v2/rust-toolchain.toml`), so build with stable. The workspace needs its submodules: clone with `git clone --recurse-submodules`, or run `git submodule update --init --recursive` in an existing checkout.
 
 ```bash
 rustup toolchain install stable
@@ -1069,8 +1069,30 @@ sensing-server --source esp32 --matter --matter-setup-file matter-setup.txt
 **Network requirements.**
 - Matter needs **IPv6** on the host and the LAN, and **mDNS** (UDP 5353). The bridge listens on UDP **5540**.
 - The bridge runs its own mDNS responder. On Linux, stop Avahi (or any other responder on port 5353) first.
-- Under WSL 2's default NAT networking, multicast doesn't reach the LAN. Run the bridge natively on Windows, in WSL's mirrored networking mode, or in a VM on a bridged network.
+- Under WSL 2's default NAT networking, multicast doesn't reach the LAN. Run the bridge natively on Windows, in WSL's mirrored networking mode (below), or in a VM on a bridged network.
 - If the host has no IPv6, the log shows `Matter bridge stopped: StdIoError: Address family not supported by protocol`, and the rest of the server keeps running.
+
+**On Windows, in WSL 2 mirrored mode.** This hasn't been tried with the bridge yet.
+
+1. Mirrored mode needs Windows 11 22H2 or newer. Put this in `%USERPROFILE%\.wslconfig`, then run `wsl --shutdown`:
+
+   ```ini
+   [wsl2]
+   networkingMode=mirrored
+   ```
+
+2. In an administrator PowerShell, let the LAN reach the two UDP ports through the Hyper-V firewall, which is on by default:
+
+   ```powershell
+   New-NetFirewallHyperVRule -Name "RuViewMatter" -DisplayName "RuView Matter" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol UDP -LocalPorts 5540
+   New-NetFirewallHyperVRule -Name "RuViewMdns" -DisplayName "RuView mDNS" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol UDP -LocalPorts 5353
+   ```
+
+3. In WSL:
+   - Install the build tools: `sudo apt install build-essential pkg-config libssl-dev git curl`. Then install Rust from <https://rustup.rs>.
+   - Check that `ip -6 addr` shows an IPv6 address on the mirrored interface.
+   - Build in the Linux file system (for example `~/RuView`), not under `/mnt/c`.
+4. Windows' own DNS Client also listens on UDP 5353. If the bridge's log shows an error binding 5353, the two clash. Then try the bridge natively on Windows, or in the Hyper-V VM.
 
 **Alexa.** Amazon's prototyping guide pairs test-vendor-ID devices only when the Echo and the Alexa app are signed in to the same (free) Amazon developer account. Whether an Echo accepts this bridge is what the spike is testing.
 

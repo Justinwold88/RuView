@@ -159,7 +159,12 @@ pub struct ZoneObservation {
 impl ZoneObservation {
     /// A snapshot with no links or modality channels yet.
     #[must_use]
-    pub fn new(zone: ZoneId, at_unix_ms: i64, occupancy: f64, evidence_level: EvidenceLevel) -> Self {
+    pub fn new(
+        zone: ZoneId,
+        at_unix_ms: i64,
+        occupancy: f64,
+        evidence_level: EvidenceLevel,
+    ) -> Self {
         Self {
             zone,
             at_unix_ms,

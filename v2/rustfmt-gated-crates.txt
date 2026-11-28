@@ -5,15 +5,20 @@
 # own (`cargo fmt -p <crate>`), then add it here. Vendored dependency patches
 # under vendor/security are byte-for-byte upstream and stay off this list.
 cog-person-count
+homecore
+homecore-migrate
+homecore-recorder
 homecore-server
 nvsim
 nvsim-server
 ruview-active
 ruview-certify
 ruview-cognitum-spaces
+ruview-counterfactual
 ruview-fann-head
 ruview-hal
 ruview-kernel
+ruview-memory
 ruview-offaxis
 ruview-ontology
 ruview-policy

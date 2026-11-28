@@ -35,9 +35,7 @@
 use serde::{Deserialize, Serialize};
 
 use ruview_ontology::{EvidenceLevel, SemanticProvenance};
-use ruview_twin::{
-    ExpectedDistribution, LinkId, LinkObservation, ObservationSet, RfTwin,
-};
+use ruview_twin::{ExpectedDistribution, LinkId, LinkObservation, ObservationSet, RfTwin};
 
 use crate::hypothesis::Hypothesis;
 

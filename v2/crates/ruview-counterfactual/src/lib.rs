@@ -131,7 +131,11 @@ mod tests {
 
         let result = evaluate(&t, &observed, &[empty, one]);
         match &result.best {
-            BestExplanation::Explained { hypothesis_id, occupant_count, margin } => {
+            BestExplanation::Explained {
+                hypothesis_id,
+                occupant_count,
+                margin,
+            } => {
                 assert_eq!(hypothesis_id, "empty");
                 assert_eq!(*occupant_count, 0);
                 assert!(*margin > 0.0);
@@ -160,7 +164,11 @@ mod tests {
 
         let result = evaluate(&t, &observed, &[empty.clone(), one, two]);
         match &result.best {
-            BestExplanation::Explained { hypothesis_id, occupant_count, margin } => {
+            BestExplanation::Explained {
+                hypothesis_id,
+                occupant_count,
+                margin,
+            } => {
                 assert_eq!(hypothesis_id, "one");
                 assert_eq!(*occupant_count, 1);
                 assert!(*margin > 0.0);
@@ -267,7 +275,9 @@ mod tests {
         let r = evaluate(&t, &empty_observed, &none);
         assert!(matches!(
             r.best,
-            BestExplanation::Unknown { reason: UnknownReason::NoHypotheses }
+            BestExplanation::Unknown {
+                reason: UnknownReason::NoHypotheses
+            }
         ));
         assert!(r.ranked.is_empty());
 
@@ -276,7 +286,9 @@ mod tests {
         let r = evaluate(&t, &empty_observed, std::slice::from_ref(&empty));
         assert!(matches!(
             r.best,
-            BestExplanation::Unknown { reason: UnknownReason::NoEvaluableLinks }
+            BestExplanation::Unknown {
+                reason: UnknownReason::NoEvaluableLinks
+            }
         ));
 
         // Non-finite occupant position is rejected at construction.
@@ -304,7 +316,9 @@ mod tests {
         assert_eq!(r.ranked[0].evaluated_links, 0);
         assert!(matches!(
             r.best,
-            BestExplanation::Unknown { reason: UnknownReason::NoEvaluableLinks }
+            BestExplanation::Unknown {
+                reason: UnknownReason::NoEvaluableLinks
+            }
         ));
 
         // A malformed occupant injected via the struct literal (bypassing the
@@ -330,7 +344,11 @@ mod tests {
 
         let result = evaluate(&t, &observed, std::slice::from_ref(&empty));
         match result.best {
-            BestExplanation::Explained { margin, occupant_count, .. } => {
+            BestExplanation::Explained {
+                margin,
+                occupant_count,
+                ..
+            } => {
                 assert!(margin.is_infinite());
                 assert_eq!(occupant_count, 0);
             }

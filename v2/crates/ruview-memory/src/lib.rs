@@ -445,7 +445,7 @@ impl ObserveOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruview_evidence::{EvidenceContext, EvidenceLevel as EvLevel, EvidenceLedger};
+    use ruview_evidence::{EvidenceContext, EvidenceLedger, EvidenceLevel as EvLevel};
     use ruview_twin::{synthetic_deployment, LinkId, ObservationSet, RfTwin, SensorId};
 
     fn cfg() -> MemoryConfig {
@@ -479,7 +479,10 @@ mod tests {
             obs.links = predicted.clone();
             let outcome = mem.observe(&obs).unwrap();
             // A snapshot matching the twin prediction never flags an anomaly.
-            assert!(!outcome.has_anomaly(), "day {day} should be within normal variation");
+            assert!(
+                !outcome.has_anomaly(),
+                "day {day} should be within normal variation"
+            );
             // Propagation is assessable from the twin prior and stays Normal.
             assert!(outcome.propagation.iter().all(|(_, a)| !a.is_anomalous()));
             last = Some(outcome);
@@ -509,7 +512,9 @@ mod tests {
 
         let outcome = mem.observe(&obs).unwrap();
         assert!(outcome.has_anomaly());
-        assert!(outcome.anomaly_kinds().contains(&AnomalyKind::PropagationChange));
+        assert!(outcome
+            .anomaly_kinds()
+            .contains(&AnomalyKind::PropagationChange));
         let (_, a) = &outcome.propagation[0];
         assert!(a.is_anomalous());
         // The anomaly's evidence level is the SYNTHETIC/L0 twin-prior floor,
@@ -537,7 +542,9 @@ mod tests {
         let off = ZoneObservation::new(zone(), ts(99, 3), 1.0, EvidenceLevel::L2);
         let outcome = mem.observe(&off).unwrap();
         assert!(outcome.occupancy.is_anomalous());
-        assert!(outcome.anomaly_kinds().contains(&AnomalyKind::UnusualOccupancyHour));
+        assert!(outcome
+            .anomaly_kinds()
+            .contains(&AnomalyKind::UnusualOccupancyHour));
 
         // Occupied at 2pm is normal, not flagged.
         let normal = ZoneObservation::new(zone(), ts(100, 14), 1.0, EvidenceLevel::L2);
@@ -560,7 +567,10 @@ mod tests {
         assert!(outcome.occupancy.is_unknown());
         assert!(outcome.propagation.iter().all(|(_, a)| a.is_unknown()));
         assert!(outcome.modality.iter().all(|(_, a)| a.is_unknown()));
-        assert!(!outcome.has_anomaly(), "must not false-positive on thin history");
+        assert!(
+            !outcome.has_anomaly(),
+            "must not false-positive on thin history"
+        );
     }
 
     #[test]
@@ -584,7 +594,10 @@ mod tests {
         // see `stat::tests` for the per-statistic proof.)
         let a = build();
         let b = build();
-        assert_eq!(a, b, "same observations in the same order ⇒ identical state");
+        assert_eq!(
+            a, b,
+            "same observations in the same order ⇒ identical state"
+        );
 
         let json = serde_json::to_string(&a).unwrap();
         let back: SpatialMemory = serde_json::from_str(&json).unwrap();
@@ -606,7 +619,9 @@ mod tests {
         let obs = ZoneObservation::new(zone(), ts(99, 10), 1.0, EvidenceLevel::L2)
             .with_modality("vibration_rms", 5.0);
         let outcome = mem.observe(&obs).unwrap();
-        assert!(outcome.anomaly_kinds().contains(&AnomalyKind::ModalityChange));
+        assert!(outcome
+            .anomaly_kinds()
+            .contains(&AnomalyKind::ModalityChange));
         assert!(outcome.modality[0].1.is_anomalous());
     }
 

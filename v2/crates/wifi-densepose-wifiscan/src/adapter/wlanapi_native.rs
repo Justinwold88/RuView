@@ -32,9 +32,13 @@
 //! back is released with `WlanFreeMemory` before return (including on the
 //! error paths).
 
+#[cfg(windows)]
 use std::time::Instant;
 
-use crate::domain::bssid::{BandType, BssidId, BssidObservation, RadioType};
+// `BssidId` and `Instant` are used only by the Windows FFI below.
+#[cfg(windows)]
+use crate::domain::bssid::BssidId;
+use crate::domain::bssid::{BandType, BssidObservation, RadioType};
 use crate::error::WifiScanError;
 
 /// Map a center frequency in kHz to an 802.11 channel number.
@@ -43,6 +47,8 @@ use crate::error::WifiScanError;
 /// Shared by the native path and unit tests; returns 0 for unknown
 /// frequencies so the caller can fall back to band-only classification.
 #[allow(clippy::cast_possible_truncation)] // channel numbers always fit u8
+// Used by the Windows FFI below and by the tests.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn freq_khz_to_channel(frequency_khz: u32) -> u8 {
     let mhz = frequency_khz / 1000;
     match mhz {
@@ -55,6 +61,8 @@ pub(crate) fn freq_khz_to_channel(frequency_khz: u32) -> u8 {
 }
 
 /// Map a center frequency in kHz to a [`BandType`].
+// Used by the Windows FFI below and by the tests.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn freq_khz_to_band(frequency_khz: u32) -> BandType {
     let mhz = frequency_khz / 1000;
     match mhz {
@@ -71,6 +79,8 @@ pub(crate) fn freq_khz_to_band(frequency_khz: u32) -> BandType {
 /// 802.11n for downstream purposes since this crate targets HT-or-newer
 /// CSI-capable APs; `None` is never returned because callers need a
 /// concrete radio type for the observation.
+// Used by the Windows FFI below and by the tests.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn phy_type_to_radio(phy: i32) -> RadioType {
     match phy {
         11 => RadioType::Be, // dot11_phy_type_eht

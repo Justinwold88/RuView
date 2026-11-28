@@ -1,8 +1,8 @@
 # Home Assistant integration
 
-RuView publishes its full WiFi-sensing capability set to **Home Assistant** via MQTT auto-discovery (HA-DISCO) and to **any Matter controller** (Apple Home / Google Home / Alexa / SmartThings / HA) via a built-in Matter Bridge (HA-FABRIC). This document is the operator guide for both paths. Design rationale: [ADR-115](../adr/ADR-115-home-assistant-integration.md).
+RuView publishes its full WiFi-sensing capability set to **Home Assistant** via MQTT auto-discovery (HA-DISCO). A built-in Matter Bridge (HA-FABRIC) for Matter controllers (Apple Home / Google Home / Alexa / SmartThings / HA) exists only as an experimental presence-only spike ([ADR-431](../adr/ADR-431-matter-bridge-sdk-spike.md)) that hasn't been paired with a controller yet. This document is the operator guide for both paths. Design rationale: [ADR-115](../adr/ADR-115-home-assistant-integration.md).
 
-> **Tested against** Home Assistant Core **2025.5**, Mosquitto add-on **6.4**, and Matter (chip-tool) **1.3**. Bump the matrix when you change tested versions.
+> **Tested against** Home Assistant Core **2025.5** and Mosquitto add-on **6.4**. The Matter bridge has not been tested with any controller yet (an earlier version of this line listed chip-tool 1.3, but the bridge couldn't be started then). Bump the matrix when you change tested versions.
 
 ---
 
@@ -205,7 +205,7 @@ Per ADR-115 §3.11.1, the Matter Bridge exposes a subset on standard clusters so
 
 The `--semantic`, `--semantic-thresholds-file`, `--semantic-zones-file` and `--no-semantic` flags from ADR-115 §3.12.5 are **not accepted by `sensing-server` yet**. The primitives always run with the defaults in `PrimitiveConfig`, and no zone map is loaded.
 
-The same goes for the Matter Bridge flags (`--matter`, `--matter-setup-file`, `--matter-reset`, `--matter-vendor-id`, `--matter-product-id`). They're defined in the library's `cli::Args` but the binary doesn't parse them, so the Matter Bridge can't be started yet.
+The Matter Bridge flags (`--matter`, `--matter-setup-file`, `--matter-reset`, `--matter-vendor-id`, `--matter-product-id`) are accepted. They start the experimental presence-only bridge from [ADR-431](../adr/ADR-431-matter-bridge-sdk-spike.md) only in a binary built with the `matter` feature; otherwise `--matter` logs a warning. The vendor and product ID flags accept only the test IDs `0xFFF1`/`0x8001`. See [Matter Bridge](../user-guide.md#matter-bridge-apple-home--google-home--alexa--smartthings) in the user guide.
 
 ### Zone tags and threshold overrides (not implemented)
 
@@ -229,7 +229,7 @@ Always pair `--privacy-mode` with `--mqtt-tls` on non-localhost brokers.
 
 ## Alexa (through Home Assistant)
 
-Until the Matter Bridge can be started, Alexa reaches RuView through Home Assistant. Alexa routines can start from a Home Assistant binary sensor only if it is shown to Alexa as a motion or contact sensor. Home Assistant does that for the `motion` and `presence` device classes, and RuView's `presence` entity uses `occupancy`. So add a motion-class sensor that follows RuView's presence.
+Until RuView's own Matter bridge has paired with an Echo (it's an experimental spike, [ADR-431](../adr/ADR-431-matter-bridge-sdk-spike.md)), Alexa reaches RuView through Home Assistant. Alexa routines can start from a Home Assistant binary sensor only if it is shown to Alexa as a motion or contact sensor. Home Assistant does that for the `motion` and `presence` device classes, and RuView's `presence` entity uses `occupancy`. So add a motion-class sensor that follows RuView's presence.
 
 **1. Add the sensor.** In `configuration.yaml`:
 
@@ -256,7 +256,7 @@ Restart Home Assistant, or reload template entities.
   - Its add-on runs only on Home Assistant OS. On a Windows PC that means Home Assistant OS in a virtual machine ([Home Assistant's Windows guide](https://www.home-assistant.io/installation/windows/): VirtualBox, or Hyper-V on Windows Pro with a bridged virtual switch). Docker and npm installs exist too and need host networking.
   - Matter needs IPv6 and mDNS working on your local network.
   - Commission the bridge from the Alexa app with the pairing code the add-on shows. Then step 3 works the same way.
-  - Until RuView's own Matter bridge ships (ADR-115), this is the only route that needs neither Home Assistant Cloud nor an Alexa skill.
+  - Until RuView's own Matter bridge is shown to work with an Echo (ADR-431), this is the only tested-by-others route that needs neither Home Assistant Cloud nor an Alexa skill.
 
 **3. Use it in a routine.** In the Alexa app, discover devices. The sensor appears as a motion sensor. Create a routine: **When this happens → Smart Home →** the sensor **→ Detects motion** (or **No motion** for when the room empties).
 
@@ -482,11 +482,12 @@ Per [ADR-115 §3.9](../adr/ADR-115-home-assistant-integration.md#39-tls--auth), 
 
 ### Matter pairing fails
 
-The Matter Bridge can't be started from `sensing-server` yet (see the note under the CLI flags), so this is for when it is.
+The bridge is an experimental spike ([ADR-431](../adr/ADR-431-matter-bridge-sdk-spike.md)) and hasn't been paired with a controller yet, so treat this list as a starting point.
 
-1. Check the setup code in your `--matter-setup-file` log (defaults to printing on startup).
-2. Make sure the host running `sensing-server` is on the same WiFi subnet as the controller.
-3. If Apple Home complains about an unknown vendor, that's expected — RuView uses dev VID `0xFFF1` until P10 (see [ADR §9.9](../adr/ADR-115-home-assistant-integration.md#9b-matter-path-p7p10)). Tap "Add anyway".
+1. Check the log for `Matter bridge stopped`. If it says `Address family not supported by protocol`, the host has no IPv6, which Matter needs.
+2. Check the setup code: the log prints `PairingCode` and `SetupQRCode` on start while nothing is paired, and `--matter-setup-file` writes both to a file. After the first pairing, add more controllers by sharing from the first one.
+3. Make sure the host running `sensing-server` is on the same network segment as the controller, with IPv6 and mDNS (UDP 5353) passing between them. Nothing else on the host may hold UDP 5353 or 5540.
+4. If the controller complains about an uncertified or test device, that's expected: the bridge uses the CSA test vendor ID `0xFFF1` and test credentials (see [ADR §9.9](../adr/ADR-115-home-assistant-integration.md#9b-matter-path-p7p10)). Choose to add it anyway if the controller offers that.
 
 ---
 

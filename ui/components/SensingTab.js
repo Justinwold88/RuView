@@ -20,14 +20,22 @@ export class SensingTab {
     this._resizeObserver = null;
     this._threeLoaded = false;
     this._calibrationCard = null;
+    this._initStarted = false;
   }
 
   async init() {
+    // app.js calls init() on every visit while splatRenderer is null, and it
+    // stays null when Three.js can't load; set the tab up only once.
+    if (this._initStarted) return;
+    this._initStarted = true;
     this._buildDOM();
     this._initCalibrationCard();
+    // Live data first. The 3D view is optional, and Three.js comes from a CDN
+    // that an offline or firewalled home network may not reach; waiting for it
+    // used to leave the whole tab without data when it failed.
+    this._connectService();
     await this._loadThree();
     this._initSplatRenderer();
-    this._connectService();
     this._setupResize();
   }
 
@@ -165,14 +173,19 @@ export class SensingTab {
       return;
     }
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const script = document.createElement('script');
       script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
       script.onload = () => {
         this._threeLoaded = true;
         resolve();
       };
-      script.onerror = () => reject(new Error('Failed to load Three.js'));
+      // Resolve rather than reject: without Three.js the tab still shows live
+      // readings, node status and calibration; only the 3D view is missing.
+      script.onerror = () => {
+        console.warn('[SensingTab] Three.js could not be loaded; the 3D view is off.');
+        resolve();
+      };
       document.head.appendChild(script);
     });
   }
@@ -182,6 +195,11 @@ export class SensingTab {
   _initSplatRenderer() {
     const viewport = this.container.querySelector('#sensingViewport');
     if (!viewport) return;
+
+    if (!this._threeLoaded) {
+      viewport.innerHTML = '<div class="sensing-loading">3D view unavailable: Three.js could not be loaded (no internet access?). Live readings still update.</div>';
+      return;
+    }
 
     // Remove loading message
     viewport.innerHTML = '';

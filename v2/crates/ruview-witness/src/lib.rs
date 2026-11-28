@@ -744,7 +744,11 @@ impl WitnessChain {
         evidence_level: EvidenceLevel,
     ) -> Result<(), ChainError> {
         let next = evidence.kind();
-        let last = self.stages.last().map(|s| s.kind).ok_or(ChainError::Empty)?;
+        let last = self
+            .stages
+            .last()
+            .map(|s| s.kind)
+            .ok_or(ChainError::Empty)?;
         if (next as u8) <= (last as u8) {
             return Err(ChainError::NotAppendable { last, next });
         }
@@ -950,11 +954,14 @@ mod tests {
         let key = [7u8; TAG_LEN];
         let signer = Blake3MacSigner::new(key);
         let device = DeviceId::new("esp32-node-01").unwrap();
-        let mut verifier = AttestationVerifier::new(FreshnessPolicy::new(1_000_000_000, 100_000_000));
+        let mut verifier =
+            AttestationVerifier::new(FreshnessPolicy::new(1_000_000_000, 100_000_000));
         verifier.enroll(device.clone(), signer.clone());
         let signed =
             SignedMeasurement::sign(&signer, device, 1, Timestamp(1000), b"csi-frame", None);
-        let vm = verifier.verify(&signed, b"csi-frame", Timestamp(1000)).unwrap();
+        let vm = verifier
+            .verify(&signed, b"csi-frame", Timestamp(1000))
+            .unwrap();
 
         let chain = WitnessChain::from_measurement(
             vm,
@@ -1026,7 +1033,10 @@ mod tests {
         let mut chain = full_chain(EvidenceLevel::L3, SourceState::LiveVerified);
         // Mutate a middle stage's confidence in place without re-linking.
         chain.stages[2].confidence = Confidence::known(0.01).unwrap();
-        assert!(matches!(chain.verify(), Err(ChainError::BrokenLink { index: 3 })));
+        assert!(matches!(
+            chain.verify(),
+            Err(ChainError::BrokenLink { index: 3 })
+        ));
     }
 
     #[test]
@@ -1045,7 +1055,10 @@ mod tests {
         chain.stages[2].evidence = StageEvidence::ModelInference(
             ModelInference::new("presence-v3", "empty-room", 0.15, DomainState::Known).unwrap(),
         );
-        assert!(matches!(chain.verify(), Err(ChainError::BrokenLink { index: 3 })));
+        assert!(matches!(
+            chain.verify(),
+            Err(ChainError::BrokenLink { index: 3 })
+        ));
     }
 
     #[test]
@@ -1062,7 +1075,10 @@ mod tests {
         let mut chain = full_chain(EvidenceLevel::L3, SourceState::LiveVerified);
         // Drop a non-root stage's prior-hash link.
         chain.stages[3].prior_hash = None;
-        assert!(matches!(chain.verify(), Err(ChainError::BrokenLink { index: 3 })));
+        assert!(matches!(
+            chain.verify(),
+            Err(ChainError::BrokenLink { index: 3 })
+        ));
     }
 
     #[test]

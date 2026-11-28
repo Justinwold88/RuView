@@ -30,8 +30,7 @@ const PARITY_RTOL: f32 = 1e-4;
 fn golden_dir() -> PathBuf {
     // This crate lives at v2/crates/wifi-densepose-aether; the shared golden
     // fixtures are the single source of truth under python/tests/golden.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../python/tests/golden")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../python/tests/golden")
 }
 
 fn read_vec(name: &str) -> Vec<f32> {
@@ -50,7 +49,12 @@ fn load_input() -> Vec<Vec<f32>> {
 }
 
 fn extractor() -> EmbeddingExtractor {
-    let e = EmbeddingConfig { d_model: 64, d_proj: 128, temperature: 0.07, normalize: true };
+    let e = EmbeddingConfig {
+        d_model: 64,
+        d_proj: 128,
+        temperature: 0.07,
+        normalize: true,
+    };
     let t = TransformerConfig {
         n_subcarriers: 56,
         n_keypoints: 17,
@@ -101,14 +105,18 @@ fn native_loaded_embedding_matches_committed_golden() {
     for w in &weights {
         buf.extend_from_slice(&w.to_le_bytes());
     }
-    let wpath = std::env::temp_dir().join(format!("aether_golden_parity_{}.bin", std::process::id()));
+    let wpath =
+        std::env::temp_dir().join(format!("aether_golden_parity_{}.bin", std::process::id()));
     std::fs::write(&wpath, &buf).expect("write weights");
     ext.load_weights(&wpath).expect("load_weights");
     let _ = std::fs::remove_file(&wpath);
 
     let loaded = ext.extract(&input);
     assert!(
-        baseline.iter().zip(&loaded).any(|(a, b)| (a - b).abs() > 1e-6),
+        baseline
+            .iter()
+            .zip(&loaded)
+            .any(|(a, b)| (a - b).abs() > 1e-6),
         "load_weights had no effect vs the random-init baseline"
     );
     assert_matches_golden(&loaded, "aether_loaded_embedding.json");
